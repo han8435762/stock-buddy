@@ -8,7 +8,7 @@ name: Release Desktop Builds
 # Windows / Linux 默认开启。
 #
 # 流程:create-release(先建空 Release)-> 各平台并行 build
-# -> 每个平台把本 job 的产物上传到 GitHub Release 和七牛云 Kodo。
+# -> 每个平台把本 job 的产物上传到 GitHub Release 和 Cloudflare R2。
 # 不从 GitHub Release 反向下载附件,避免大文件重复传输和无代理时卡住。
 on:
   workflow_dispatch:
@@ -68,7 +68,11 @@ jobs:
     needs: create-release
     runs-on: windows-latest
     env:
-      QINIU_ACCESS_KEY: ${{ secrets.QINIU_ACCESS_KEY || vars.QINIU_ACCESS_KEY }}
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID || vars.R2_ACCOUNT_ID }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID || vars.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY || vars.R2_SECRET_ACCESS_KEY }}
+      R2_BUCKET: ${{ secrets.R2_BUCKET || vars.R2_BUCKET }}
+      R2_KEY_PREFIX: ${{ secrets.R2_KEY_PREFIX || vars.R2_KEY_PREFIX }}
     defaults:
       run:
         working-directory: AionUi
@@ -149,27 +153,34 @@ jobs:
             out/*.blockmap \
             --clobber
 
-      - name: Install Qiniu Node.js SDK
-        if: ${{ env.QINIU_ACCESS_KEY != '' }}
-        working-directory: ${{ github.workspace }}
-        run: npm install --no-save --no-package-lock --ignore-scripts qiniu@7.15.2
-
-      - name: Upload assets to Qiniu Kodo
-        if: ${{ env.QINIU_ACCESS_KEY != '' }}
+      - name: Upload assets to R2
         shell: bash
-        env:
-          QINIU_ACCESS_KEY: ${{ secrets.QINIU_ACCESS_KEY || vars.QINIU_ACCESS_KEY }}
-          QINIU_SECRET_KEY: ${{ secrets.QINIU_SECRET_KEY || vars.QINIU_SECRET_KEY }}
-          QINIU_BUCKET: ${{ secrets.QINIU_BUCKET || vars.QINIU_BUCKET }}
-          QINIU_REGION: ${{ secrets.QINIU_REGION || vars.QINIU_REGION }}
-          QINIU_DOMAIN: ${{ secrets.QINIU_DOMAIN || vars.QINIU_DOMAIN }}
-          QINIU_KEY_PREFIX: ${{ secrets.QINIU_KEY_PREFIX || vars.QINIU_KEY_PREFIX }}
         run: |
           set -euo pipefail
           VERSION="${{ inputs.version }}"
           VERSION="${VERSION#v}"
-          export QINIU_KEY_PREFIX="${QINIU_KEY_PREFIX:-stockbuddy/releases/${VERSION}}"
-          unset QINIU_OBJECT_KEY
+          R2_BUCKET="${R2_BUCKET:-imgora}"
+          R2_KEY_PREFIX="${R2_KEY_PREFIX:-stockbuddy/releases}"
+          R2_ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          [ -n "${R2_ACCOUNT_ID:-}" ] || { echo "R2_ACCOUNT_ID is required" >&2; exit 1; }
+          [ -n "${R2_ACCESS_KEY_ID:-}" ] || { echo "R2_ACCESS_KEY_ID is required" >&2; exit 1; }
+          [ -n "${R2_SECRET_ACCESS_KEY:-}" ] || { echo "R2_SECRET_ACCESS_KEY is required" >&2; exit 1; }
+
+          upload_r2() {
+            local file="$1"
+            local content_type="$2"
+            local filename key
+            filename="$(basename "$file")"
+            key="${R2_KEY_PREFIX}/${VERSION}/${filename}"
+            echo "Uploading ${key}"
+            aws s3 cp "$file" "s3://${R2_BUCKET}/${key}" \
+              --endpoint-url "$R2_ENDPOINT" \
+              --region auto \
+              --content-type "$content_type" \
+              --content-disposition "attachment; filename=\"${filename}\"" \
+              --cache-control "public,max-age=31536000,immutable"
+          }
+
           shopt -s nullglob
           files=(
             out/StockBuddy-*-win-*.exe
@@ -178,7 +189,11 @@ jobs:
           )
           [ "${#files[@]}" -gt 0 ] || { echo "No Windows release assets found" >&2; exit 1; }
           for file in "${files[@]}"; do
-            node ../.github/scripts/upload-to-qiniu.cjs "$file"
+            case "$file" in
+              *.exe) upload_r2 "$file" "application/octet-stream" ;;
+              *.yml) upload_r2 "$file" "text/yaml" ;;
+              *.blockmap) upload_r2 "$file" "application/json" ;;
+            esac
           done
 
   build-macos:
@@ -187,7 +202,11 @@ jobs:
     needs: create-release
     runs-on: macos-14
     env:
-      QINIU_ACCESS_KEY: ${{ secrets.QINIU_ACCESS_KEY || vars.QINIU_ACCESS_KEY }}
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID || vars.R2_ACCOUNT_ID }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID || vars.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY || vars.R2_SECRET_ACCESS_KEY }}
+      R2_BUCKET: ${{ secrets.R2_BUCKET || vars.R2_BUCKET }}
+      R2_KEY_PREFIX: ${{ secrets.R2_KEY_PREFIX || vars.R2_KEY_PREFIX }}
     defaults:
       run:
         working-directory: AionUi
@@ -260,32 +279,32 @@ jobs:
             out/StockBuddy-*-mac-*.dmg \
             --clobber
 
-      - name: Install Qiniu Node.js SDK
-        if: ${{ env.QINIU_ACCESS_KEY != '' }}
-        working-directory: ${{ github.workspace }}
-        run: npm install --no-save --no-package-lock --ignore-scripts qiniu@7.15.2
-
-      - name: Upload assets to Qiniu Kodo
-        if: ${{ env.QINIU_ACCESS_KEY != '' }}
+      - name: Upload assets to R2
         shell: bash
-        env:
-          QINIU_ACCESS_KEY: ${{ secrets.QINIU_ACCESS_KEY || vars.QINIU_ACCESS_KEY }}
-          QINIU_SECRET_KEY: ${{ secrets.QINIU_SECRET_KEY || vars.QINIU_SECRET_KEY }}
-          QINIU_BUCKET: ${{ secrets.QINIU_BUCKET || vars.QINIU_BUCKET }}
-          QINIU_REGION: ${{ secrets.QINIU_REGION || vars.QINIU_REGION }}
-          QINIU_DOMAIN: ${{ secrets.QINIU_DOMAIN || vars.QINIU_DOMAIN }}
-          QINIU_KEY_PREFIX: ${{ secrets.QINIU_KEY_PREFIX || vars.QINIU_KEY_PREFIX }}
         run: |
           set -euo pipefail
           VERSION="${{ inputs.version }}"
           VERSION="${VERSION#v}"
-          export QINIU_KEY_PREFIX="${QINIU_KEY_PREFIX:-stockbuddy/releases/${VERSION}}"
-          unset QINIU_OBJECT_KEY
+          R2_BUCKET="${R2_BUCKET:-imgora}"
+          R2_KEY_PREFIX="${R2_KEY_PREFIX:-stockbuddy/releases}"
+          R2_ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          [ -n "${R2_ACCOUNT_ID:-}" ] || { echo "R2_ACCOUNT_ID is required" >&2; exit 1; }
+          [ -n "${R2_ACCESS_KEY_ID:-}" ] || { echo "R2_ACCESS_KEY_ID is required" >&2; exit 1; }
+          [ -n "${R2_SECRET_ACCESS_KEY:-}" ] || { echo "R2_SECRET_ACCESS_KEY is required" >&2; exit 1; }
+
           shopt -s nullglob
           files=(out/StockBuddy-*-mac-*.dmg)
           [ "${#files[@]}" -gt 0 ] || { echo "No macOS release assets found" >&2; exit 1; }
           for file in "${files[@]}"; do
-            node ../.github/scripts/upload-to-qiniu.cjs "$file"
+            filename="$(basename "$file")"
+            key="${R2_KEY_PREFIX}/${VERSION}/${filename}"
+            echo "Uploading ${key}"
+            aws s3 cp "$file" "s3://${R2_BUCKET}/${key}" \
+              --endpoint-url "$R2_ENDPOINT" \
+              --region auto \
+              --content-type "application/x-apple-diskimage" \
+              --content-disposition "attachment; filename=\"${filename}\"" \
+              --cache-control "public,max-age=31536000,immutable"
           done
 
   build-linux:
@@ -297,7 +316,11 @@ jobs:
     # 若在 24.04 上构建,产物要求 glibc >= 2.39,老系统装不上。
     runs-on: ubuntu-22.04
     env:
-      QINIU_ACCESS_KEY: ${{ secrets.QINIU_ACCESS_KEY || vars.QINIU_ACCESS_KEY }}
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID || vars.R2_ACCOUNT_ID }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID || vars.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY || vars.R2_SECRET_ACCESS_KEY }}
+      R2_BUCKET: ${{ secrets.R2_BUCKET || vars.R2_BUCKET }}
+      R2_KEY_PREFIX: ${{ secrets.R2_KEY_PREFIX || vars.R2_KEY_PREFIX }}
     defaults:
       run:
         working-directory: AionUi
@@ -369,30 +392,30 @@ jobs:
             out/StockBuddy-*-linux-*.deb \
             --clobber
 
-      - name: Install Qiniu Node.js SDK
-        if: ${{ env.QINIU_ACCESS_KEY != '' }}
-        working-directory: ${{ github.workspace }}
-        run: npm install --no-save --no-package-lock --ignore-scripts qiniu@7.15.2
-
-      - name: Upload assets to Qiniu Kodo
-        if: ${{ env.QINIU_ACCESS_KEY != '' }}
+      - name: Upload assets to R2
         shell: bash
-        env:
-          QINIU_ACCESS_KEY: ${{ secrets.QINIU_ACCESS_KEY || vars.QINIU_ACCESS_KEY }}
-          QINIU_SECRET_KEY: ${{ secrets.QINIU_SECRET_KEY || vars.QINIU_SECRET_KEY }}
-          QINIU_BUCKET: ${{ secrets.QINIU_BUCKET || vars.QINIU_BUCKET }}
-          QINIU_REGION: ${{ secrets.QINIU_REGION || vars.QINIU_REGION }}
-          QINIU_DOMAIN: ${{ secrets.QINIU_DOMAIN || vars.QINIU_DOMAIN }}
-          QINIU_KEY_PREFIX: ${{ secrets.QINIU_KEY_PREFIX || vars.QINIU_KEY_PREFIX }}
         run: |
           set -euo pipefail
           VERSION="${{ inputs.version }}"
           VERSION="${VERSION#v}"
-          export QINIU_KEY_PREFIX="${QINIU_KEY_PREFIX:-stockbuddy/releases/${VERSION}}"
-          unset QINIU_OBJECT_KEY
+          R2_BUCKET="${R2_BUCKET:-imgora}"
+          R2_KEY_PREFIX="${R2_KEY_PREFIX:-stockbuddy/releases}"
+          R2_ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          [ -n "${R2_ACCOUNT_ID:-}" ] || { echo "R2_ACCOUNT_ID is required" >&2; exit 1; }
+          [ -n "${R2_ACCESS_KEY_ID:-}" ] || { echo "R2_ACCESS_KEY_ID is required" >&2; exit 1; }
+          [ -n "${R2_SECRET_ACCESS_KEY:-}" ] || { echo "R2_SECRET_ACCESS_KEY is required" >&2; exit 1; }
+
           shopt -s nullglob
           files=(out/StockBuddy-*-linux-*.deb)
           [ "${#files[@]}" -gt 0 ] || { echo "No Linux release assets found" >&2; exit 1; }
           for file in "${files[@]}"; do
-            node ../.github/scripts/upload-to-qiniu.cjs "$file"
+            filename="$(basename "$file")"
+            key="${R2_KEY_PREFIX}/${VERSION}/${filename}"
+            echo "Uploading ${key}"
+            aws s3 cp "$file" "s3://${R2_BUCKET}/${key}" \
+              --endpoint-url "$R2_ENDPOINT" \
+              --region auto \
+              --content-type "application/vnd.debian.binary-package" \
+              --content-disposition "attachment; filename=\"${filename}\"" \
+              --cache-control "public,max-age=31536000,immutable"
           done

@@ -12,10 +12,6 @@ const {
 
 const syncScript = fs.readFileSync(require.resolve('./sync-release-to-gitcode.cjs'), 'utf8');
 const workflow = fs.readFileSync(require.resolve('../workflows/release.yml'), 'utf8');
-const qiniuTestWorkflow = fs.readFileSync(
-  require.resolve('../workflows/qiniu-upload-test.yml'),
-  'utf8',
-);
 
 test('normalizes release versions to v-prefixed tags', () => {
   assert.equal(normalizeTag('2.1.48'), 'v2.1.48');
@@ -102,37 +98,15 @@ test('uploads explicitly provided local files without downloading the GitHub Rel
   assert.doesNotMatch(syncScript, /downloadGithubAssets/);
 });
 
-test('GitHub Actions uploads each build job output to Qiniu without GitCode jobs', () => {
+test('GitHub Actions uploads each build job output to R2 without GitCode jobs', () => {
   assert.doesNotMatch(workflow, /create-gitcode-release:/);
   assert.doesNotMatch(workflow, /GITCODE_/);
-  assert.match(workflow, /Upload assets to Qiniu Kodo/);
-  assert.match(workflow, /QINIU_ACCESS_KEY/);
-  assert.match(workflow, /QINIU_SECRET_KEY/);
-  assert.match(workflow, /QINIU_BUCKET/);
-  assert.match(workflow, /upload-to-qiniu\.cjs/);
+  assert.equal((workflow.match(/- name: Upload assets to R2/g) || []).length, 3);
+  assert.match(workflow, /R2_ACCOUNT_ID/);
+  assert.match(workflow, /R2_ACCESS_KEY_ID/);
+  assert.match(workflow, /R2_SECRET_ACCESS_KEY/);
+  assert.match(workflow, /aws s3 cp/);
   assert.doesNotMatch(workflow, /^\s+releases:\s+/m);
   assert.doesNotMatch(workflow, /sync-gitcode-release:/);
   assert.doesNotMatch(workflow, /gh release download/);
-});
-
-test('GitHub Actions skips Qiniu SDK installation and uploads without an access key', () => {
-  const guardedSteps = workflow.match(
-    /      - name: (?:Install Qiniu Node\.js SDK|Upload assets to Qiniu Kodo)[\s\S]*?(?=\n      - name:|\n  build-|$)/g,
-  ) || [];
-
-  assert.equal(guardedSteps.length, 6, 'each build job should have two guarded Qiniu steps');
-  for (const step of guardedSteps) {
-    assert.match(step, /if: \$\{\{ env\.QINIU_ACCESS_KEY != '' \}\}/);
-  }
-
-  for (const workflowText of [qiniuTestWorkflow]) {
-    assert.match(
-      workflowText,
-      /- name: Install Qiniu Node\.js SDK[\s\S]*?if: \$\{\{ env\.QINIU_ACCESS_KEY != '' \}\}/,
-    );
-    assert.match(
-      workflowText,
-      /- name: Upload test file to Qiniu Kodo[\s\S]*?if: \$\{\{ env\.QINIU_ACCESS_KEY != '' \}\}/,
-    );
-  }
 });

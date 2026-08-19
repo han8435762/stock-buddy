@@ -14,15 +14,13 @@
 #   ./release.sh 0.2.3 --wait     # 触发后等待 GitHub 构建完成并汇总
 #   ./release.sh 0.2.3 --skip-mac --skip-gh   # 断点续传: 只重新上传本地已构建好的 mac 产物
 #   ./release.sh 0.2.11 --upload-github       # 只上传本地 mac 产物到已有 GitHub Release
-#   ./release.sh 0.2.11 --upload-qiniu       # 只上传本地 mac 产物到七牛云
 #
-#   GitHub 网络操作会在 setclash/unsetclash 包裹下执行；七牛云上传会强制直连。
+#   GitHub 和 R2 网络操作会在 setclash/unsetclash 处理后直连执行。
 #
 # 选项:
 #   --skip-mac    跳过本地 macOS 构建(已构建好，仅重新上传)
 #   --skip-gh     跳过触发 GitHub Actions(已触发过，只做本地构建+上传)
-#   --upload-github 只上传本地 macOS 产物到已有 GitHub Release，不构建、不触发 Actions、不上传七牛
-#   --upload-qiniu 只上传本地 macOS 产物到七牛云，不下载 GitHub Release
+#   --upload-github 只上传本地 macOS 产物到已有 GitHub Release，不构建、不触发 Actions
 #   --wait        等待 GitHub win/linux 构建完成后退出(默认)
 #   --no-wait     触发后不等待 GitHub 构建，打印运行链接即返回
 #   --help        显示帮助
@@ -32,7 +30,7 @@
 #     package.json 版本钉到 <VERSION>，构建结束自动还原，不会改动工作区。
 #   - 脚本不 commit / 不打 tag / 不建 Release：tag + Release 由 GitHub Actions 的
 #     create-release job 创建，本脚本负责触发 + 本地 mac 构建 + 上传 mac 产物到
-#     GitHub Release 和七牛云。
+#     GitHub Release；各平台由 GitHub Actions 直接上传到 R2。
 #
 set -euo pipefail
 
@@ -43,18 +41,19 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="$REPO_ROOT/AionUi"
 OUT_DIR="$APP_DIR/out"
 WORKFLOW="release.yml"
-QINIU_UPLOAD_SCRIPT="$REPO_ROOT/.github/scripts/upload-to-qiniu.cjs"
-QINIU_SDK_VERSION="7.15.2"
 DEFAULT_VERSION="0.2.3"
+DEFAULT_R2_BUCKET="imgora"
+DEFAULT_R2_KEY_PREFIX="stockbuddy/releases"
+DEFAULT_R2_RETAIN_VERSIONS="4"
 CLASH_SHELL="${CLASH_SHELL:-zsh}"
 
-# 只读取白名单中的七牛变量，不执行 .env 内容，避免把其他配置或命令带入进程。
-load_qiniu_env() {
+# 只读取白名单中的发布变量，不执行 .env 内容，避免把其他配置或命令带入进程。
+load_release_env() {
   local env_file="$REPO_ROOT/.env"
   local name line value
   [ -f "$env_file" ] || return 0
 
-  for name in QINIU_ACCESS_KEY QINIU_SECRET_KEY QINIU_BUCKET QINIU_REGION QINIU_DOMAIN QINIU_KEY_PREFIX; do
+  for name in R2_ACCOUNT_ID R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY R2_BUCKET R2_KEY_PREFIX R2_RETAIN_VERSIONS; do
     [ -n "${!name:-}" ] && continue
 
     while IFS= read -r line || [ -n "$line" ]; do
@@ -76,7 +75,10 @@ load_qiniu_env() {
   done
 }
 
-load_qiniu_env
+load_release_env
+R2_BUCKET="${R2_BUCKET:-$DEFAULT_R2_BUCKET}"
+R2_KEY_PREFIX="${R2_KEY_PREFIX:-$DEFAULT_R2_KEY_PREFIX}"
+R2_RETAIN_VERSIONS="${R2_RETAIN_VERSIONS:-$DEFAULT_R2_RETAIN_VERSIONS}"
 
 # 颜色输出(自动判断是否 TTY)
 if [ -t 1 ]; then
@@ -102,13 +104,8 @@ while [ $# -gt 0 ]; do
     --skip-mac)     SKIP_MAC=1; shift ;;
     --skip-gh)      SKIP_GH=1; shift ;;
     --upload-github|--github-only)
-      [ "$UPLOAD_MODE" = "full" ] || { echo "--upload-github 与 --upload-qiniu 不能同时使用" >&2; exit 2; }
+      [ "$UPLOAD_MODE" = "full" ] || { echo "--upload-github 不能与其他独立模式同时使用" >&2; exit 2; }
       UPLOAD_MODE="github"
-      shift
-      ;;
-    --upload-qiniu|--qiniu-only)
-      [ "$UPLOAD_MODE" = "full" ] || { echo "--upload-github 与 --upload-qiniu 不能同时使用" >&2; exit 2; }
-      UPLOAD_MODE="qiniu"
       shift
       ;;
     --help|-h)      SHOW_HELP=1; shift ;;
@@ -133,24 +130,22 @@ StockBuddy 一键发版脚本
   ./release.sh 0.2.3 --wait     # 等待 GitHub 构建完成
   ./release.sh 0.2.3 --skip-mac --skip-gh   # 仅重新上传本地 mac 产物
   ./release.sh 0.2.11 --upload-github       # 只上传本地 mac 产物到 GitHub Release
-  ./release.sh 0.2.11 --upload-qiniu       # 只上传本地 mac 产物到七牛云
 
 选项:
   --skip-mac   跳过本地 macOS 构建(仅上传已构建产物)
   --skip-gh    跳过触发 GitHub Actions
   --upload-github 只上传本地 macOS 产物到已有 GitHub Release
-  --upload-qiniu 只上传本地 macOS 产物到七牛云
   --wait       等待 GitHub 构建完成(默认)
   --no-wait    不等待 GitHub 构建
   --help       显示本帮助
 
 环境变量:
-  QINIU_ACCESS_KEY   七牛云 Access Key
-  QINIU_SECRET_KEY   七牛云 Secret Key
-  QINIU_BUCKET       七牛云空间名
-  QINIU_REGION       可选，七牛云区域 ID；留空则自动识别
-  QINIU_DOMAIN       可选，公开空间/自定义域名，用于输出访问链接
-  QINIU_KEY_PREFIX   可选，默认 stockbuddy/releases/<版本号>
+  R2_ACCOUNT_ID         Cloudflare Account ID
+  R2_ACCESS_KEY_ID      R2 API Token 的 Access Key ID（用于列举/删除旧版本）
+  R2_SECRET_ACCESS_KEY  R2 API Token 的 Secret Access Key（用于列举/删除旧版本）
+  R2_BUCKET              R2 存储桶；默认 imgora
+  R2_KEY_PREFIX          R2 对象前缀；默认 stockbuddy/releases
+  R2_RETAIN_VERSIONS     R2 保留版本数；默认 4
 EOF
 }
 
@@ -160,7 +155,7 @@ if [ "$SHOW_HELP" -eq 1 ]; then
 fi
 
 # 独立上传模式天然不需要构建或触发 GitHub Actions。
-if [ "$UPLOAD_MODE" = "github" ] || [ "$UPLOAD_MODE" = "qiniu" ]; then
+if [ "$UPLOAD_MODE" = "github" ]; then
   SKIP_MAC=1
   SKIP_GH=1
   WAIT=0
@@ -173,6 +168,8 @@ if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)
 fi
 
 TAG="v${VERSION}"
+R2_KEY_PREFIX="${R2_KEY_PREFIX#/}"
+R2_KEY_PREFIX="${R2_KEY_PREFIX%/}"
 
 # ---------------------------------------------------------------------------
 # 日志工具
@@ -213,7 +210,7 @@ run_with_github_proxy() {
   ' release.sh-github-proxy "$@"
 }
 
-# 七牛云上传不走代理。除了调用 unsetclash 外，再从子进程环境中移除常见的
+# 直连网络操作。除了调用 unsetclash 外，再从子进程环境中移除常见的
 # HTTP(S)/SOCKS 代理变量，防止 setclash 通过 export 留下代理配置。
 run_without_proxy() {
   if command -v "$CLASH_SHELL" >/dev/null 2>&1; then
@@ -233,20 +230,14 @@ preflight() {
   step "前置检查"
 
   command -v gh  >/dev/null 2>&1 || die "未找到 gh(GitHub CLI)，请先安装: https://cli.github.com/"
+  if [ "$UPLOAD_MODE" != "github" ]; then
+    command -v aws >/dev/null 2>&1 || die "未找到 aws CLI，R2 版本清理需要 AWS CLI。"
+    command -v node >/dev/null 2>&1 || die "未找到 Node.js，脚本需要 Node.js 处理版本号。"
+  fi
   if [ "$SKIP_MAC" -eq 0 ]; then
     command -v bun >/dev/null 2>&1 || die "未找到 bun，请先安装: https://bun.sh/"
   fi
-  if qiniu_upload_enabled; then
-    command -v node >/dev/null 2>&1 || die "未找到 Node.js 18+，七牛云上传需要 Node.js。"
-    if ! node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 18 ? 0 : 1)' >/dev/null 2>&1; then
-      die "Node.js 版本过低，七牛云上传需要 Node.js 18+。"
-    fi
-  fi
   [ -d "$APP_DIR" ] || die "未找到应用目录: $APP_DIR"
-
-  if qiniu_upload_enabled; then
-    [ -f "$QINIU_UPLOAD_SCRIPT" ] || die "未找到七牛云上传脚本: $QINIU_UPLOAD_SCRIPT"
-  fi
 
   # 确认 gh 已登录且有 repo 权限
   if ! run_with_github_proxy gh auth status >/dev/null 2>&1; then
@@ -264,11 +255,8 @@ preflight() {
   ok "仓库: ${REPO}  分支: ${BRANCH}  版本: ${VERSION} (tag ${TAG})"
   ok "本机架构: $(uname -m) / $(uname -s)"
 
-  if qiniu_upload_enabled; then
-    ensure_qiniu_env
-    ensure_qiniu_sdk
-  else
-    warn "未设置 QINIU_ACCESS_KEY，跳过七牛云上传"
+  if [ "$UPLOAD_MODE" != "github" ]; then
+    ensure_r2_env
   fi
 
   # 是否跳过本地 mac 构建 & 是否跳过触发
@@ -288,31 +276,161 @@ preflight() {
 }
 
 # ---------------------------------------------------------------------------
-# 七牛云配置与 SDK
+# R2 配置与版本保留
 # ---------------------------------------------------------------------------
-qiniu_upload_enabled() {
-  [ -n "${QINIU_ACCESS_KEY:-}" ]
-}
-
-ensure_qiniu_env() {
+ensure_r2_env() {
   local name
-  for name in QINIU_ACCESS_KEY QINIU_SECRET_KEY QINIU_BUCKET; do
-    [ -n "${!name:-}" ] || die "未设置 ${name}。请先 export ${name}=..."
+  for name in R2_ACCOUNT_ID R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY; do
+    [ -n "${!name:-}" ] || die "未设置 ${name}。请在 .env 或 shell 环境中配置 R2 API Token。"
   done
+
+  if ! printf '%s' "$R2_RETAIN_VERSIONS" | grep -Eq '^[1-9][0-9]*$'; then
+    die "R2_RETAIN_VERSIONS 必须是正整数，当前值: ${R2_RETAIN_VERSIONS}"
+  fi
+
+  [ -n "$R2_KEY_PREFIX" ] || die "R2_KEY_PREFIX 不能为空。"
+  R2_ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
 }
 
-ensure_qiniu_sdk() {
-  if node -e 'require.resolve("qiniu")' >/dev/null 2>&1; then
+r2_s3() {
+  run_without_proxy env \
+    AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID" \
+    AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY" \
+    AWS_DEFAULT_REGION="auto" \
+    AWS_PAGER="" \
+    aws --endpoint-url "$R2_ENDPOINT" "$@"
+}
+
+r2_upload_file() {
+  local file="$1"
+  local content_type="$2"
+  local filename key
+  filename="$(basename "$file")"
+  key="${R2_KEY_PREFIX}/${VERSION}/${filename}"
+
+  info "上传 macOS 产物到 R2: ${key} ($(du -h "$file" | cut -f1))"
+  r2_s3 s3 cp "$file" "s3://${R2_BUCKET}/${key}" \
+    --content-type "$content_type" \
+    --content-disposition "attachment; filename=\"${filename}\"" \
+    --cache-control "public,max-age=31536000,immutable"
+}
+
+upload_mac_to_r2() {
+  step "上传本地 macOS 产物到 R2"
+  [ -n "${MAC_ASSET_FILES[0]:-}" ] || die "未找到 macOS 产物，无法上传 R2。"
+  r2_upload_file "${MAC_ASSET_FILES[0]}" "application/x-apple-diskimage"
+  ok "macOS 产物已上传到 R2"
+}
+
+r2_list_object_keys() {
+  local output
+  output="$(r2_s3 s3api list-objects-v2 \
+    --bucket "$R2_BUCKET" \
+    --prefix "${R2_KEY_PREFIX}/" \
+    --query 'Contents[].Key' \
+    --output text)"
+  [ "$output" = "None" ] && return 0
+  printf '%s\n' "$output" | tr '\t' '\n' | sed '/^[[:space:]]*$/d'
+}
+
+r2_versions_from_keys() {
+  local object_keys="$1"
+  while IFS= read -r key; do
+    [ -n "$key" ] || continue
+    case "$key" in
+      "$R2_KEY_PREFIX"/*/*)
+        local remainder version
+        remainder="${key#"$R2_KEY_PREFIX/"}"
+        version="${remainder%%/*}"
+        printf '%s\n' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' && printf '%s\n' "$version"
+        ;;
+    esac
+  done <<< "$object_keys" | sort -u
+}
+
+r2_sort_versions() {
+  local direction="$1"
+  local input
+  input="$(cat)"
+  R2_VERSIONS_INPUT="$input" node - "$direction" <<'NODE'
+const direction = process.argv[2] === 'desc' ? -1 : 1;
+const versions = (process.env.R2_VERSIONS_INPUT || '').split(/\r?\n/).filter(Boolean);
+
+function parse(version) {
+  const match = version.match(/^(\d+)\.(\d+)\.(\d+)(?:-(.+))?$/);
+  if (!match) return [0, 0, 0, ''];
+  return [Number(match[1]), Number(match[2]), Number(match[3]), match[4] || ''];
+}
+
+function compare(left, right) {
+  const a = parse(left);
+  const b = parse(right);
+  for (let i = 0; i < 3; i += 1) {
+    if (a[i] !== b[i]) return direction * (a[i] - b[i]);
+  }
+  if (!a[3] && b[3]) return direction;
+  if (a[3] && !b[3]) return -direction;
+  return direction * a[3].localeCompare(b[3], undefined, { numeric: true });
+}
+
+process.stdout.write(versions.sort(compare).join('\n'));
+if (versions.length > 0) process.stdout.write('\n');
+NODE
+}
+
+r2_delete_version() {
+  local version="$1"
+  local object_keys="$2"
+  local deleted=0
+
+  step "删除 R2 旧版本 ${version}"
+  while IFS= read -r key; do
+    [ -n "$key" ] || continue
+    case "$key" in
+      "$R2_KEY_PREFIX/$version/"*)
+        r2_s3 s3api delete-object --bucket "$R2_BUCKET" --key "$key" >/dev/null
+        deleted=$((deleted + 1))
+        ;;
+    esac
+  done <<< "$object_keys"
+
+  [ "$deleted" -gt 0 ] || die "R2 版本 ${version} 没有可删除的对象，已停止以避免误删。"
+  ok "已删除 R2 ${version} 的 ${deleted} 个对象"
+}
+
+cleanup_r2_versions() {
+  step "清理 R2 旧版本（保留最近 ${R2_RETAIN_VERSIONS} 个版本）"
+
+  local object_keys versions sorted_versions count delete_count deleted=0 old_version
+  object_keys="$(r2_list_object_keys)"
+  versions="$(r2_versions_from_keys "$object_keys")"
+
+  if [ -z "$versions" ]; then
+    ok "R2 当前没有 StockBuddy 版本"
     return 0
   fi
 
-  command -v npm >/dev/null 2>&1 || die "未找到 npm，无法安装七牛云 Node.js SDK。"
+  if ! printf '%s\n' "$versions" | grep -Fxq "$VERSION"; then
+    die "R2 中未找到 StockBuddy v${VERSION}，GitHub Actions 可能尚未上传完成。"
+  fi
 
-  QINIU_SDK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/stockbuddy-qiniu.XXXXXX")"
-  trap 'if [ -n "${QINIU_SDK_DIR:-}" ] && [ -d "$QINIU_SDK_DIR" ]; then rm -rf "$QINIU_SDK_DIR"; fi' EXIT
-  info "本机未安装 qiniu，临时安装 qiniu@${QINIU_SDK_VERSION}..."
-  npm install --prefix "$QINIU_SDK_DIR" --no-package-lock --ignore-scripts "qiniu@${QINIU_SDK_VERSION}" >/dev/null
-  export NODE_PATH="$QINIU_SDK_DIR/node_modules${NODE_PATH:+:$NODE_PATH}"
+  count="$(printf '%s\n' "$versions" | sed '/^[[:space:]]*$/d' | wc -l | tr -d ' ')"
+  delete_count=$((count - R2_RETAIN_VERSIONS))
+  [ "$delete_count" -gt 0 ] || {
+    ok "R2 当前有 ${count} 个版本，未超过保留数量 ${R2_RETAIN_VERSIONS}"
+    return 0
+  }
+
+  sorted_versions="$(printf '%s\n' "$versions" | r2_sort_versions asc)"
+  while IFS= read -r old_version; do
+    [ -n "$old_version" ] || continue
+    [ "$old_version" = "$VERSION" ] && continue
+    r2_delete_version "$old_version" "$object_keys"
+    deleted=$((deleted + 1))
+    [ "$deleted" -ge "$delete_count" ] && break
+  done <<< "$sorted_versions"
+
+  [ "$deleted" -eq "$delete_count" ] || die "R2 版本清理未完成：计划删除 ${delete_count} 个，实际删除 ${deleted} 个。"
 }
 
 # ---------------------------------------------------------------------------
@@ -465,36 +583,6 @@ upload_mac() {
 }
 
 # ---------------------------------------------------------------------------
-# 上传本地 macOS 产物到七牛云
-# ---------------------------------------------------------------------------
-upload_mac_to_qiniu() {
-  if ! qiniu_upload_enabled; then
-    warn "未设置 QINIU_ACCESS_KEY，跳过七牛云上传"
-    return 0
-  fi
-
-  step "上传本地 macOS 产物到七牛云 (${TAG})"
-
-  collect_mac_assets
-  ensure_qiniu_env
-  ensure_qiniu_sdk
-
-  export QINIU_ACCESS_KEY QINIU_SECRET_KEY QINIU_BUCKET
-  export QINIU_REGION="${QINIU_REGION:-}"
-  export QINIU_DOMAIN="${QINIU_DOMAIN:-}"
-  export QINIU_KEY_PREFIX="${QINIU_KEY_PREFIX:-stockbuddy/releases/${VERSION}}"
-  # Release assets must each derive their own key from the filename.
-  unset QINIU_OBJECT_KEY
-
-  local f
-  for f in "${MAC_ASSET_FILES[@]}"; do
-    run_without_proxy node "$QINIU_UPLOAD_SCRIPT" "$f"
-  done
-
-  ok "macOS 产物已上传到七牛云，Key 前缀: ${QINIU_KEY_PREFIX}"
-}
-
-# ---------------------------------------------------------------------------
 # 等待 GitHub 构建完成(可选)
 # ---------------------------------------------------------------------------
 wait_github_run() {
@@ -518,11 +606,7 @@ wait_github_run() {
 
     if [ "$status" = "completed" ]; then
       if [ "$conclusion" = "success" ]; then
-        if qiniu_upload_enabled; then
-          ok "GitHub 构建成功，Windows/Linux 产物已由 workflow 上传到 Release ${TAG} 和七牛云"
-        else
-          ok "GitHub 构建成功，Windows/Linux 产物已由 workflow 上传到 Release ${TAG}（已跳过七牛云上传）"
-        fi
+        ok "GitHub 构建成功，Windows/Linux 产物已由 workflow 上传到 Release ${TAG} 和 R2"
       else
         warn "GitHub 构建结束，结论: ${conclusion:-unknown}。请到运行页查看详情(可能影响 win/linux 产物)。"
       fi
@@ -560,19 +644,7 @@ EOF
     require_existing_release
     upload_mac
     echo
-    ok "GitHub macOS 产物上传完成。未触发 GitHub Actions，未上传七牛云。"
-    return 0
-  fi
-
-  if [ "$UPLOAD_MODE" = "qiniu" ]; then
-    step "独立上传模式: 七牛云"
-    upload_mac_to_qiniu
-    echo
-    if qiniu_upload_enabled; then
-      ok "七牛云 macOS 产物上传完成。未触发 GitHub Actions，未构建或上传 GitHub。"
-    else
-      warn "未设置 QINIU_ACCESS_KEY，已跳过七牛云上传。未触发 GitHub Actions，未构建或上传 GitHub。"
-    fi
+    ok "GitHub macOS 产物上传完成。未触发 GitHub Actions。"
     return 0
   fi
 
@@ -590,10 +662,11 @@ EOF
 
   wait_for_release
   upload_mac
-  upload_mac_to_qiniu
+  upload_mac_to_r2
 
   if [ "$WAIT" -eq 1 ]; then
     wait_github_run
+    cleanup_r2_versions
   else
     info "未等待 GitHub 构建(--no-wait)。可稍后查看: gh run list --workflow=$WORKFLOW"
   fi
