@@ -88,12 +88,134 @@ StockBuddy 基于 [AionUi](https://github.com/iofficeai/aionui) 进行二次开�
 
 ## 开发
 
-### 桌面端
+所有桌面端开发命令都在 `AionUi/` 目录下执行。
 
-桌面端源码位于 `AionUi/`。具体的依赖安装、开发、测试和打包命令请参考：
+### 环境要求
 
-- [`AionUi/readme.md`](AionUi/readme.md)
-- [`AionUi/package.json`](AionUi/package.json)
+- Node.js `>=22 <25`
+- [Bun](https://bun.sh/)
+- Git
+- Rust stable + Cargo：当需要重新编译本地 AionCore 后端或当前平台缺少对应后端二进制时使用
+- Windows 构建需要 Visual Studio C++ Build Tools；macOS 构建需要 Xcode Command Line Tools
+
+当前仓库已包含 macOS arm64 与 x64 的 AionCore 后端资源。Windows/Linux 构建前，请确认 `AionUi/resources/bundled-aioncore/` 中存在对应平台和架构的后端文件。
+
+### 安装依赖
+
+```bash
+cd AionUi
+bun install
+```
+
+`postinstall` 会安装 Electron 原生依赖。首次安装或切换 Electron 版本后，如果原生模块加载失败，可以执行：
+
+```bash
+bunx electron-rebuild -f -w better-sqlite3
+```
+
+### 启动开发环境
+
+```bash
+cd AionUi
+bun run dev
+```
+
+`bun run dev` 会启动 Electron + Vite 热更新开发环境，并执行开发环境下的 AionCore 资源准备。也可以使用以下命令：
+
+```bash
+bun run start          # 启动桌面端开发环境
+bun run start:multi    # 允许同时启动多个实例
+bun run webui          # 以浏览器 WebUI 模式运行
+```
+
+如果启动时提示找不到 `aioncore`，请先确认对应二进制可执行，并从同一个终端启动开发环境：
+
+```bash
+# macOS / Linux
+which aioncore
+aioncore --help
+
+# Windows PowerShell
+where.exe aioncore
+aioncore --help
+```
+
+### 代码检查与测试
+
+```bash
+cd AionUi
+
+bun run lint           # 检查代码
+bun run format:check   # 检查格式
+bun run test           # 运行单元测试
+bun run test:integration
+bun run test:e2e       # 运行 Playwright 端到端测试
+```
+
+开发过程中也可以使用：
+
+```bash
+bun run lint:fix       # 自动修复部分 lint 问题
+bun run format         # 自动格式化代码
+bun run test:watch     # 监听模式运行测试
+```
+
+### 生成桌面应用
+
+先进入 `AionUi/` 并安装依赖。生成应用前建议先运行 `bun run lint` 和 `bun run test`。
+
+#### 仅构建应用代码
+
+只执行 Electron 主进程、预加载脚本和渲染层构建，不生成安装包：
+
+```bash
+bun run package
+```
+
+构建产物输出到 `AionUi/out/`。
+
+#### 构建当前平台安装包
+
+```bash
+bun run dist
+```
+
+安装包和可分发产物输出到 `AionUi/out/`。构建脚本会根据当前平台执行 Electron Builder。
+
+#### 指定目标平台
+
+```bash
+# macOS，默认构建 arm64 + x64
+bun run build-mac
+
+# macOS Apple Silicon
+bun run build-mac:arm64
+
+# macOS Intel
+bun run build-mac:x64
+
+# Windows，自动识别架构
+bun run build-win
+
+# Windows ARM64 / x64
+bun run build-win:arm64
+bun run build-win:x64
+
+# Linux .deb
+bun run build-deb
+```
+
+也可以直接使用按平台命名的命令：
+
+```bash
+bun run dist:mac
+bun run dist:win
+bun run dist:linux
+```
+
+构建结果的文件名格式为 `StockBuddy-版本号-平台-架构`。macOS 生成 `.dmg`，Windows 生成 NSIS `.exe` 安装程序，Linux 生成 `.deb` 安装包。
+
+更完整的构建预检、原生模块重建和平台构建说明，请参考 [`AionUi/justfile`](AionUi/justfile)、[`AionUi/docs/contributing/development.md`](AionUi/docs/contributing/development.md) 和 [`AionUi/packages/desktop/electron-builder.yml`](AionUi/packages/desktop/electron-builder.yml)。
 
 ## 致谢
 
