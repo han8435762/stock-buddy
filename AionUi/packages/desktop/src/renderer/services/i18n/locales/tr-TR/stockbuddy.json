@@ -1,0 +1,33 @@
+{
+  "nav": {
+    "newResearch": "New Company Research",
+    "companies": "My Companies",
+    "updates": "Update Center",
+    "skills": "Research Skills",
+    "advancedFeatures": "Advanced Features",
+    "localFirst": "Local First",
+    "localFirstHint": "Data is stored on this computer",
+    "placeholder": "Under Construction",
+    "placeholderDescription": "This page will be implemented in a later phase.",
+    "modelSettings": "Model Ayarları"
+  },
+  "materialModal": {
+    "title": "Bu araştırma için materyalleri seçin",
+    "searchPlaceholder": "Dosya adı, yıl veya türe göre ara",
+    "selectedCount": "{{count}} seçildi",
+    "clear": "Temizle",
+    "apply": "Seçimi uygula",
+    "empty": "Eşleşen materyal yok"
+  },
+  "newResearch": {
+    "noCompanyTitle": "Henüz şirket yok",
+    "noCompanyDesc": "Başlamadan önce bir şirket ekleyerek ayrı bir araştırma kütüphanesi oluşturun.",
+    "goAddCompany": "Şirket ekle",
+    "claudeUnavailableTitle": "Claude Code hazır değil",
+    "claudeUnavailableDesc": "Kullanılabilir Claude Code bulunamadı veya model sağlayıcı yapılandırılmadı, bu yüzden araştırma başarısız olabilir.",
+    "goConfigureModel": "Modeli yapılandır",
+    "continueCreate": "Yine de oluştur",
+    "promptResearchCompany": "Bu şirketi araştır",
+    "promptRecentAnnouncements": "Son üç aydaki duyuruları özetle"
+  }
+}

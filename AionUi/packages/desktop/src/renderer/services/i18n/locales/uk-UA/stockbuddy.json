@@ -1,0 +1,33 @@
+{
+  "nav": {
+    "newResearch": "New Company Research",
+    "companies": "My Companies",
+    "updates": "Update Center",
+    "skills": "Research Skills",
+    "advancedFeatures": "Advanced Features",
+    "localFirst": "Local First",
+    "localFirstHint": "Data is stored on this computer",
+    "placeholder": "Under Construction",
+    "placeholderDescription": "This page will be implemented in a later phase.",
+    "modelSettings": "Налаштування моделі"
+  },
+  "materialModal": {
+    "title": "Виберіть матеріали для цього дослідження",
+    "searchPlaceholder": "Пошук за назвою файлу, роком або типом",
+    "selectedCount": "Вибрано: {{count}}",
+    "clear": "Очистити",
+    "apply": "Застосувати вибір",
+    "empty": "Відповідних матеріалів не знайдено"
+  },
+  "newResearch": {
+    "noCompanyTitle": "Компаній поки немає",
+    "noCompanyDesc": "Спершу додайте компанію, щоб створити окрему бібліотеку матеріалів.",
+    "goAddCompany": "Додати компанію",
+    "claudeUnavailableTitle": "Claude Code недоступний",
+    "claudeUnavailableDesc": "Claude Code недоступний або постачальника моделей не налаштовано, тому дослідження може не виконатися.",
+    "goConfigureModel": "Налаштувати модель",
+    "continueCreate": "Усе одно створити",
+    "promptResearchCompany": "Дослідити цю компанію",
+    "promptRecentAnnouncements": "Підсумувати оголошення за останні три місяці"
+  }
+}

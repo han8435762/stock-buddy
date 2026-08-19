@@ -1,0 +1,869 @@
+/**
+ * @license
+ * Copyright 2025 AionUi (aionui.com)
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import { ipcBridge } from '@/common';
+import { base64ToBlob } from '@/renderer/utils/file/base64';
+import { downloadBlob, downloadFileFromPath, downloadTextContent } from '@/renderer/utils/file/download';
+import { useLayoutContext } from '@/renderer/hooks/context/LayoutContext';
+import { toLocalFileHref } from '@/renderer/components/Markdown/markdownUtils';
+import { PreviewToolbarExtrasProvider, type PreviewToolbarExtras } from '../../context/PreviewToolbarExtrasContext';
+import { usePreviewContext } from '../../context/PreviewContext';
+import { useResizableSplit } from '@/renderer/hooks/ui/useResizableSplit';
+import { Link } from '@arco-design/web-react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import DiffPreview from '../viewers/DiffViewer';
+import ExcelPreview from '../viewers/ExcelViewer';
+import HTMLEditor from '../editors/HTMLEditor';
+import HTMLRenderer from '../renderers/HTMLRenderer';
+import ImagePreview from '../viewers/ImageViewer';
+import MarkdownEditor from '../editors/MarkdownEditor';
+import MarkdownPreview from '../viewers/MarkdownViewer';
+import PDFPreview from '../viewers/PDFViewer';
+import OfficeDocPreview from '../viewers/OfficeDocViewer';
+import PptViewer from '../viewers/PptViewer';
+import CodeEditor from '../editors/CodeEditor';
+import URLViewer from '../viewers/URLViewer';
+import BrowserTabLayer from '../../browser/BrowserTabLayer';
+import { MAX_BROWSER_TABS } from '../../browser/constants';
+import {
+  PreviewTabs,
+  PreviewToolbar,
+  PreviewContextMenu,
+  PreviewConfirmModals,
+  PreviewHistoryDropdown,
+  type ContextMenuState,
+  type CloseTabConfirmState,
+  type PreviewTab,
+} from '.';
+import type { PreviewContentType } from '@/common/types/office/preview';
+import { DEFAULT_SPLIT_RATIO, FILE_TYPES_WITH_BUILTIN_OPEN, MAX_SPLIT_WIDTH, MIN_SPLIT_WIDTH } from '../../constants';
+import {
+  usePreviewHistory,
+  usePreviewKeyboardShortcuts,
+  useScrollSync,
+  useTabOverflow,
+  useThemeDetection,
+} from '../../hooks';
+import { useTranslation } from 'react-i18next';
+import './preview.css';
+
+/**
+ * 预览面板主组件
+ * Main preview panel component
+ *
+ * 支持多 Tab 切换，每个 Tab 可以显示不同类型的内容
+ * Supports multiple tabs, each tab can display different types of content
+ */
+const PreviewPanel: React.FC = () => {
+  const { t } = useTranslation();
+  const {
+    isOpen,
+    tabs,
+    activeTabId,
+    activeTab,
+    closeTab,
+    switchTab,
+    closePreview,
+    updateContent,
+    saveContent,
+    addDomSnippet,
+    updateTab,
+    openBrowserTab,
+    browserTabLimitHitAt,
+  } = usePreviewContext();
+  const layout = useLayoutContext();
+
+  // 视图状态 / View states
+  const [viewMode, setViewMode] = useState<'source' | 'preview'>('preview');
+  const [isSplitScreenEnabled, setIsSplitScreenEnabled] = useState(false);
+  const [inspectMode, setInspectMode] = useState(false);
+  const [toolbarExtras, setToolbarExtras] = useState<PreviewToolbarExtras | null>(null);
+
+  // 切换文件时把视图模式复位为预览，避免上一个文件的 source 模式串到下一个文件（如代码文件丢失语法高亮）。
+  // 注意：单预览浏览模式下打开新文件会复用当前 tab 的 id，所以这里要监听实际显示的文件标识（路径 + 类型），
+  // 而不是 activeTabId（它不会变）。
+  // Reset view mode to preview when the displayed file changes so a previous file's source mode does not
+  // leak into the next one (e.g. a code file losing syntax highlighting). In single-preview browse mode a
+  // new file reuses the active tab's id, so we key on the file identity (path + type), not activeTabId.
+  useEffect(() => {
+    setViewMode('preview');
+  }, [activeTabId, activeTab?.metadata?.file_path, activeTab?.content_type]);
+
+  // 确认对话框状态 / Confirmation dialog states
+  const [closeTabConfirm, setCloseTabConfirm] = useState<CloseTabConfirmState>({ show: false, tabId: null });
+
+  // 右键菜单状态 / Context menu state
+  const [contextMenu, setContextMenu] = useState<ContextMenuState>({ show: false, x: 0, y: 0, tabId: null });
+
+  // 容器引用 / Container refs
+  const editorContainerRef = useRef<HTMLDivElement>(null);
+  const previewContainerRef = useRef<HTMLDivElement>(null);
+
+  // 使用自定义 Hooks / Use custom hooks
+  const currentTheme = useThemeDetection();
+  const { tabsContainerRef, tabFadeState } = useTabOverflow([tabs, activeTabId]);
+  const { handleEditorScroll, handlePreviewScroll } = useScrollSync({
+    enabled: isSplitScreenEnabled,
+    editorContainerRef,
+    previewContainerRef,
+  });
+
+  // eslint-disable-next-line max-len
+  const {
+    historyVersions,
+    historyLoading,
+    snapshotSaving,
+    historyError,
+    historyTarget,
+    refreshHistory,
+    handleSaveSnapshot,
+    handleSnapshotSelect,
+    messageApi,
+    messageContextHolder,
+  } = usePreviewHistory({
+    activeTab,
+    updateContent,
+  });
+
+  usePreviewKeyboardShortcuts({
+    isDirty: activeTab?.isDirty,
+    onSave: () => void saveContent(),
+  });
+
+  // 新建浏览器 tab（tab 栏加号）/ New browser tab (plus button in the tab bar)
+  const handleNewBrowserTab = useCallback(() => openBrowserTab(), [openBrowserTab]);
+
+  /**
+   * 浏览器 tab 达上限时提示用户。上限触达会复用最旧的 tab，如果不说一声，
+   * 用户看到的是"点了新建但旧 tab 内容变了"——像 bug。
+   *
+   * Warn when the browser tab cap is hit. Hitting the cap reuses the oldest tab;
+   * without this notice the user just sees an old tab's content change, which
+   * reads as a bug.
+   */
+  useEffect(() => {
+    if (!browserTabLimitHitAt) return;
+    messageApi.warning?.(t('preview.browser.tabLimitReached', { count: MAX_BROWSER_TABS }));
+  }, [browserTabLimitHitAt, messageApi, t]);
+
+  const setToolbarExtrasCallback = useCallback((extras: PreviewToolbarExtras | null) => {
+    setToolbarExtras(extras);
+  }, []);
+
+  // 处理 HTML 审核模式元素选中 / Handle HTML inspect mode element selection
+  const handleElementSelected = useCallback(
+    (element: { html: string; tag: string }) => {
+      addDomSnippet(element.tag, element.html);
+    },
+    [addDomSnippet]
+  );
+
+  const toolbarExtrasContextValue = useMemo(
+    () => ({
+      setExtras: setToolbarExtrasCallback,
+    }),
+    [setToolbarExtrasCallback]
+  );
+
+  // 内层分割：编辑器和预览的分割比例（默认 50/50）
+  // Inner split: Split ratio between editor and preview (default 50/50)
+  const { splitRatio, createDragHandle } = useResizableSplit({
+    defaultWidth: DEFAULT_SPLIT_RATIO,
+    minWidth: MIN_SPLIT_WIDTH,
+    maxWidth: MAX_SPLIT_WIDTH,
+    storageKey: 'preview-panel-split-ratio',
+  });
+
+  // 使用 useCallback 包装 updateContent，确保引用稳定 / Wrap updateContent with useCallback for stable reference
+  const handleContentChange = useCallback(
+    (new_content: string) => {
+      // 严格的类型检查，防止 Event 对象被错误传递 / Strict type checking to prevent Event object from being passed incorrectly
+      if (typeof new_content !== 'string') {
+        return;
+      }
+      try {
+        updateContent(new_content);
+      } catch {
+        // Silently ignore errors
+      }
+    },
+    [updateContent]
+  );
+
+  // 处理关闭tab / Handle close tab
+  const handleCloseTab = useCallback(
+    (tabId: string) => {
+      const tab = tabs.find((t) => t.id === tabId);
+      // 如果tab有未保存的修改，显示确认对话框 / If tab has unsaved changes, show confirmation dialog
+      if (tab?.isDirty) {
+        setCloseTabConfirm({ show: true, tabId });
+      } else {
+        // 没有未保存的修改，直接关闭 / No unsaved changes, close directly
+        closeTab(tabId);
+      }
+    },
+    [tabs, closeTab]
+  );
+
+  // 保存并关闭tab / Save and close tab
+  const handleSaveAndCloseTab = useCallback(async () => {
+    if (!closeTabConfirm.tabId) return;
+
+    try {
+      const success = await saveContent(closeTabConfirm.tabId);
+      if (!success) {
+        throw new Error(t('common.saveFailed'));
+      }
+      closeTab(closeTabConfirm.tabId);
+      setCloseTabConfirm({ show: false, tabId: null });
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : t('common.unknownError');
+      messageApi.error(`${t('common.saveFailed')}: ${errorMsg}`);
+    }
+  }, [closeTabConfirm.tabId, saveContent, closeTab, messageApi, t]);
+
+  // 不保存直接关闭tab / Close tab without saving
+  const handleCloseWithoutSave = useCallback(() => {
+    if (!closeTabConfirm.tabId) return;
+    closeTab(closeTabConfirm.tabId);
+    setCloseTabConfirm({ show: false, tabId: null });
+  }, [closeTabConfirm.tabId, closeTab]);
+
+  // 取消关闭tab / Cancel close tab
+  const handleCancelCloseTab = useCallback(() => {
+    setCloseTabConfirm({ show: false, tabId: null });
+  }, []);
+
+  // 处理 tab 右键菜单 / Handle tab context menu
+  const handleTabContextMenu = useCallback((e: React.MouseEvent, tabId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenu({
+      show: true,
+      x: e.clientX,
+      y: e.clientY,
+      tabId,
+    });
+  }, []);
+
+  // 关闭左侧 tabs / Close tabs to the left
+  const handleCloseLeft = useCallback(
+    (tabId: string) => {
+      const currentIndex = tabs.findIndex((t) => t.id === tabId);
+      if (currentIndex <= 0) return;
+
+      const tabsToClose = tabs.slice(0, currentIndex);
+      tabsToClose.forEach((tab) => closeTab(tab.id));
+      setContextMenu({ show: false, x: 0, y: 0, tabId: null });
+    },
+    [tabs, closeTab]
+  );
+
+  // 关闭右侧 tabs / Close tabs to the right
+  const handleCloseRight = useCallback(
+    (tabId: string) => {
+      const currentIndex = tabs.findIndex((t) => t.id === tabId);
+      if (currentIndex < 0 || currentIndex >= tabs.length - 1) return;
+
+      const tabsToClose = tabs.slice(currentIndex + 1);
+      tabsToClose.forEach((tab) => closeTab(tab.id));
+      setContextMenu({ show: false, x: 0, y: 0, tabId: null });
+    },
+    [tabs, closeTab]
+  );
+
+  // 关闭其他 tabs / Close other tabs
+  const handleCloseOthers = useCallback(
+    (tabId: string) => {
+      const tabsToClose = tabs.filter((t) => t.id !== tabId);
+      tabsToClose.forEach((tab) => closeTab(tab.id));
+      setContextMenu({ show: false, x: 0, y: 0, tabId: null });
+    },
+    [tabs, closeTab]
+  );
+
+  // 关闭全部 tabs / Close all tabs
+  const handleCloseAll = useCallback(() => {
+    tabs.forEach((tab) => closeTab(tab.id));
+    setContextMenu({ show: false, x: 0, y: 0, tabId: null });
+  }, [tabs, closeTab]);
+
+  // 内容字段用空值兜底派生，保证下方 hooks 恒定执行；空态守卫移到所有 hooks
+  // 之后（文件尾部的 return 前），避免面板常驻挂载时 hooks 顺序发生变化。
+  const content = activeTab?.content ?? '';
+  const content_type = activeTab?.content_type;
+  const metadata = activeTab?.metadata;
+  const isMarkdown = content_type === 'markdown';
+  const isHTML = content_type === 'html';
+
+  // 检查文件类型是否已有内置的打开按钮（Word、PPT、PDF、Excel 组件内部已提供）
+  // Check if file type already has built-in open button
+  // (Word, PPT, PDF, Excel components provide their own)
+  const hasBuiltInOpenButton = (FILE_TYPES_WITH_BUILTIN_OPEN as readonly string[]).includes(content_type);
+
+  // 对所有有 file_path 的文件显示"在系统中打开"按钮（统一在工具栏显示）
+  // Show "Open in System" button for all files with file_path (unified in toolbar)
+  const showOpenInSystemButton = Boolean(metadata?.file_path);
+
+  // 下载文件到本地 / Download file to local system
+  const handleDownload = useCallback(async () => {
+    try {
+      const rawFileName = metadata?.file_name || `${content_type}-${Date.now()}`;
+
+      if (metadata?.file_path) {
+        // All files with a disk path (binary, image, zip, etc.) — unified path
+        await downloadFileFromPath(metadata.file_path, rawFileName, metadata.workspace);
+        return;
+      }
+
+      if (content_type === 'image') {
+        // Pure base64 image (no file path on disk)
+        if (!content) {
+          messageApi.error(t('messages.downloadFailed', { defaultValue: 'Failed to download' }));
+          return;
+        }
+        const blob = await fetch(content).then((res) => res.blob());
+        const nameExt = metadata?.file_name?.split('.').pop();
+        const mimeExt = blob.type?.includes('/') ? blob.type.split('/').pop() : undefined;
+        const ext = nameExt || mimeExt || 'png';
+        const normalizedExt = ext.toLowerCase();
+        const hasSameExt = rawFileName.toLowerCase().endsWith(`.${normalizedExt}`);
+        const file_name = hasSameExt ? rawFileName : `${rawFileName}.${ext}`;
+        await downloadBlob(blob, file_name);
+        return;
+      }
+
+      // Text / code content (no file path, no binary)
+      const nameExt = metadata?.file_name?.split('.').pop();
+      let mimeType = 'text/plain;charset=utf-8';
+      let ext = 'txt';
+      if (content_type === 'markdown') {
+        mimeType = 'text/markdown;charset=utf-8';
+        ext = 'md';
+      } else if (content_type === 'html') {
+        mimeType = 'text/html;charset=utf-8';
+        ext = 'html';
+      } else if (content_type === 'diff') {
+        ext = 'diff';
+      } else if (content_type === 'code') {
+        // Code files: set extension based on language
+        const lang = metadata?.language;
+        if (lang === 'javascript' || lang === 'js') ext = 'js';
+        else if (lang === 'typescript' || lang === 'ts') ext = 'ts';
+        else if (lang === 'python' || lang === 'py') ext = 'py';
+        else if (lang === 'java') ext = 'java';
+        else if (lang === 'cpp' || lang === 'c++') ext = 'cpp';
+        else if (lang === 'c') ext = 'c';
+        else if (lang === 'html') ext = 'html';
+        else if (lang === 'css') ext = 'css';
+        else if (lang === 'json') ext = 'json';
+      }
+      if (nameExt) ext = nameExt;
+      const normalizedExt = ext.toLowerCase();
+      const hasSameExt = rawFileName.toLowerCase().endsWith(`.${normalizedExt}`);
+      const file_name = hasSameExt ? rawFileName : `${rawFileName}.${ext}`;
+      await downloadTextContent(content, file_name, mimeType);
+    } catch (error) {
+      console.error('[PreviewPanel] Failed to download file:', error);
+      messageApi.error(t('messages.downloadFailed', { defaultValue: 'Failed to download' }));
+    }
+  }, [content, content_type, metadata?.file_name, metadata?.file_path, metadata?.language, messageApi, t]);
+
+  // 下载为 PDF：markdown 经主进程 printToPDF 转成 PDF 后触发下载。
+  const handleDownloadAsPdf = useCallback(async () => {
+    if (content_type !== 'markdown' || !content) return;
+    try {
+      const rawFileName = metadata?.file_name || `${activeTab?.title || 'document'}.md`;
+      const pdfName = rawFileName.replace(/\.md$/i, '.pdf');
+      const base64 = await ipcBridge.pdf.markdownToPdf.invoke({ markdown: content });
+      if (!base64) {
+        messageApi.error(t('messages.downloadFailed', { defaultValue: 'Failed to download' }));
+        return;
+      }
+      const blob = base64ToBlob(`data:application/pdf;base64,${base64}`, 'application/pdf');
+      await downloadBlob(blob, pdfName);
+    } catch (error) {
+      console.error('[PreviewPanel] Failed to download as PDF:', error);
+      messageApi.error(t('messages.downloadFailed', { defaultValue: 'Failed to download' }));
+    }
+  }, [content, content_type, metadata?.file_name, activeTab?.title, messageApi, t]);
+
+  // 下载为 Word：使用统一的 Markdown→Word 转换器生成 .docx 后触发下载。
+  const handleDownloadAsWord = useCallback(async () => {
+    if (content_type !== 'markdown' || !content) return;
+    try {
+      const rawFileName = metadata?.file_name || `${activeTab?.title || 'document'}.md`;
+      const wordName = rawFileName.replace(/\.md$/i, '.docx');
+      const { documentConverter } = await import('@/common/chat/document/DocumentConverter');
+      const arrayBuffer = await documentConverter.markdownToWord(content);
+      const blob = new Blob([arrayBuffer], {
+        type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      });
+      await downloadBlob(blob, wordName);
+    } catch (error) {
+      console.error('[PreviewPanel] Failed to download as Word:', error);
+      messageApi.error(t('messages.downloadFailed', { defaultValue: 'Failed to download' }));
+    }
+  }, [content, content_type, metadata?.file_name, activeTab?.title, messageApi, t]);
+
+  // 在系统默认应用中打开文件 / Open file in system default application
+  const handleOpenInSystem = useCallback(async () => {
+    if (!metadata?.file_path) {
+      try {
+        messageApi.error(t('preview.openInSystemFailed'));
+      } catch {
+        // Context holder may be unmounted
+      }
+      return;
+    }
+
+    try {
+      // 使用系统默认应用打开文件 / Open file with system default application
+      await ipcBridge.shell.openFile.invoke(metadata.file_path);
+      try {
+        messageApi.success(t('preview.openInSystemSuccess'));
+      } catch {
+        // Context holder may be unmounted after async operation
+      }
+    } catch (err) {
+      try {
+        messageApi.error(t('preview.openInSystemFailed'));
+      } catch {
+        // Context holder may be unmounted after async operation
+      }
+    }
+  }, [metadata?.file_path, messageApi, t]);
+
+  // 渲染历史下拉菜单 / Render history dropdown
+  const renderHistoryDropdown = () => {
+    // eslint-disable-next-line max-len
+    return (
+      <PreviewHistoryDropdown
+        historyVersions={historyVersions}
+        historyLoading={historyLoading}
+        historyError={historyError}
+        historyTarget={historyTarget}
+        currentTheme={currentTheme}
+        onSnapshotSelect={handleSnapshotSelect}
+      />
+    );
+  };
+
+  const renderMissingFile = (fileMetadata: (typeof tabs)[number]['metadata']) => {
+    const filePath = fileMetadata?.file_path;
+    const externalHref = filePath ? toLocalFileHref(filePath) : undefined;
+
+    return (
+      <div className='flex flex-1 flex-col items-center justify-center gap-10px px-24px text-center'>
+        <div className='text-15px font-medium text-t-primary'>
+          {t('preview.missingFile.title', { defaultValue: 'File not found' })}
+        </div>
+        <div className='max-w-560px break-all text-12px leading-18px text-t-secondary'>
+          {filePath || t('preview.errors.missingFilePath')}
+        </div>
+        {externalHref && (
+          <Link href={externalHref} target='_blank' rel='noreferrer' className='text-13px'>
+            {t('preview.missingFile.openInNewTab', { defaultValue: 'Try opening in a new tab' })}
+          </Link>
+        )}
+      </div>
+    );
+  };
+
+  // 渲染单个文件 tab 的内容。所有文件 tab 常驻挂载（见 FileContentLayer），切换只切
+  // 可见性；面板级状态仅当 isActive 时生效，隐藏 tab 用固定默认值，保证 memo 跳过。
+  const renderTabContent = (tab: (typeof tabs)[number], isActive: boolean) => {
+    const content = tab.content;
+    const content_type = tab.content_type;
+    const metadata = tab.metadata;
+    const isMarkdown = content_type === 'markdown';
+    const isHTML = content_type === 'html';
+    const isEditable = metadata?.editable !== false;
+    const activeViewMode = isActive ? viewMode : 'preview';
+    const activeIsSplit = isActive ? isSplitScreenEnabled : false;
+    const activeInspectMode = isActive ? inspectMode : false;
+    const activeSplitRatio = isActive ? splitRatio : DEFAULT_SPLIT_RATIO;
+    const activeEditorRef = isActive ? editorContainerRef : undefined;
+    const activePreviewRef = isActive ? previewContainerRef : undefined;
+    const activeEditorScroll = isActive ? handleEditorScroll : undefined;
+    const activePreviewScroll = isActive ? handlePreviewScroll : undefined;
+
+    if (metadata?.missingFile) return renderMissingFile(metadata);
+
+    // 浏览器 tab 由常驻的 BrowserTabLayer 渲染，不能走这里 —— 否则切 tab 会重新加载页面
+    // Browser tabs are rendered by the always-mounted BrowserTabLayer; rendering
+    // them here would reload the page on every tab switch.
+    if (content_type === 'browser') return null;
+
+    // Markdown 模式 / Markdown mode
+    if (isMarkdown) {
+      // 分屏模式：左右分割（编辑器 + 预览）/ Split-screen mode: Editor + Preview
+      if (activeIsSplit) {
+        // 移动端：全屏显示预览，隐藏编辑器 / Mobile: Full-screen preview, hide editor
+        if (layout?.isMobile) {
+          return (
+            <div className='flex-1 overflow-hidden'>
+              <MarkdownPreview content={content} file_path={metadata?.file_path} workspace={metadata?.workspace} />
+            </div>
+          );
+        }
+
+        // 桌面端：左右分割布局 / Desktop: Split layout
+        return (
+          <div className='flex flex-1 relative overflow-hidden'>
+            {/* 左侧：编辑器 / Left: Editor */}
+            <div className='flex flex-col relative' style={{ width: `${activeSplitRatio}%` }}>
+              <div className='h-40px flex items-center px-12px bg-bg-2'>
+                <span className='text-12px text-t-secondary'>{t('preview.editor')}</span>
+              </div>
+              <div className='flex-1 overflow-hidden'>
+                <MarkdownEditor
+                  value={content}
+                  onChange={updateContent}
+                  containerRef={activeEditorRef}
+                  onScroll={activeEditorScroll}
+                />
+              </div>
+              {/* 拖动分割线 / Drag handle */}
+              {createDragHandle({ className: 'absolute right-0 top-0 bottom-0' })}
+            </div>
+
+            {/* 右侧：预览 / Right: Preview */}
+            <div className='flex flex-col' style={{ width: `${100 - activeSplitRatio}%`, minWidth: 0 }}>
+              <div className='h-40px flex items-center px-12px bg-bg-2'>
+                <span className='text-12px text-t-secondary'>{t('preview.preview')}</span>
+              </div>
+              <div className='flex flex-col flex-1 overflow-hidden'>
+                <MarkdownPreview
+                  content={content}
+                  containerRef={activePreviewRef}
+                  onScroll={activePreviewScroll}
+                  file_path={metadata?.file_path}
+                  workspace={metadata?.workspace}
+                />
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      // 非分屏模式：单栏（原文或预览）/ Non-split mode: Single panel (source or preview)
+      return (
+        <MarkdownPreview
+          content={content}
+          viewMode={activeViewMode}
+          onViewModeChange={isActive ? setViewMode : undefined}
+          onContentChange={updateContent}
+          file_path={metadata?.file_path}
+          workspace={metadata?.workspace}
+        />
+      );
+    }
+
+    // HTML 模式 / HTML mode
+    if (isHTML) {
+      // 分屏模式：左右分割（编辑器 + 预览）/ Split-screen mode: Editor + Preview
+      if (activeIsSplit) {
+        // 移动端：全屏显示预览，隐藏编辑器 / Mobile: Full-screen preview, hide editor
+        if (layout?.isMobile) {
+          return (
+            <div className='flex-1 overflow-hidden'>
+              <HTMLRenderer
+                content={content}
+                file_path={metadata?.file_path}
+                workspace={metadata?.workspace}
+                isDirty={tab.isDirty}
+                copySuccessMessage={t('preview.html.copySuccess')}
+                inspectMode={activeInspectMode}
+                onElementSelected={isActive ? handleElementSelected : undefined}
+              />
+            </div>
+          );
+        }
+
+        // 桌面端：左右分割布局 / Desktop: Split layout
+        return (
+          <div className='flex flex-1 relative overflow-hidden'>
+            {/* 左侧：编辑器 / Left: Editor */}
+            <div className='flex flex-col relative' style={{ width: `${activeSplitRatio}%` }}>
+              <div className='h-40px flex items-center px-12px bg-bg-2'>
+                <span className='text-12px text-t-secondary'>{t('preview.editor')}</span>
+              </div>
+              <div className='flex-1 overflow-hidden'>
+                <HTMLEditor
+                  value={content}
+                  onChange={updateContent}
+                  containerRef={activeEditorRef}
+                  onScroll={activeEditorScroll}
+                  file_path={metadata?.file_path}
+                />
+              </div>
+              {/* 拖动分割线 / Drag handle */}
+              {createDragHandle({ className: 'absolute right-0 top-0 bottom-0' })}
+            </div>
+
+            {/* 右侧：预览 / Right: Preview */}
+            <div className='flex flex-col' style={{ width: `${100 - activeSplitRatio}%`, minWidth: 0 }}>
+              <div className='h-40px flex items-center justify-between px-12px bg-bg-2'>
+                <span className='text-12px text-t-secondary'>{t('preview.preview')}</span>
+              </div>
+              <div className='flex flex-col flex-1 overflow-hidden'>
+                {/* prettier-ignore */}
+                {/* eslint-disable-next-line max-len */}
+                <HTMLRenderer
+                  content={content}
+                  file_path={metadata?.file_path}
+                  workspace={metadata?.workspace}
+                  isDirty={tab.isDirty}
+                  containerRef={activePreviewRef}
+                  onScroll={activePreviewScroll}
+                  inspectMode={activeInspectMode}
+                  copySuccessMessage={t('preview.html.copySuccess')}
+                  onElementSelected={isActive ? handleElementSelected : undefined}
+                />
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      // 非分屏模式：单栏（原文或预览）/ Non-split mode: Single panel (source or preview)
+      if (viewMode === 'source') {
+        return (
+          <div className='flex-1 overflow-hidden'>
+            <HTMLEditor value={content} onChange={handleContentChange} file_path={metadata?.file_path} />
+          </div>
+        );
+      } else {
+        // 预览模式 / Preview mode
+        return (
+          <div className='flex-1 overflow-hidden'>
+            <HTMLRenderer
+              content={content}
+              file_path={metadata?.file_path}
+              workspace={metadata?.workspace}
+              isDirty={tab.isDirty}
+              inspectMode={activeInspectMode}
+              copySuccessMessage={t('preview.html.copySuccess')}
+              onElementSelected={isActive ? handleElementSelected : undefined}
+            />
+          </div>
+        );
+      }
+    }
+
+    // 其他类型：全屏预览 / Other types: Full-screen preview
+    if (content_type === 'diff') {
+      return (
+        <DiffPreview
+          content={content}
+          metadata={metadata}
+          hideToolbar
+          viewMode={activeViewMode}
+          onViewModeChange={isActive ? setViewMode : undefined}
+        />
+      );
+    } else if (content_type === 'code') {
+      // 统一：始终可编辑的 CodeEditor（看=改）/ Unified: always-editable CodeEditor (view = edit)
+      return (
+        <div className='flex-1 overflow-hidden'>
+          <CodeEditor
+            value={content}
+            onChange={handleContentChange}
+            language={metadata?.language}
+            fileName={metadata?.file_name}
+            readOnly={isEditable === false}
+            targetLine={metadata?.targetLine}
+            targetColumn={metadata?.targetColumn}
+          />
+        </div>
+      );
+    } else if (content_type === 'pdf') {
+      return <PDFPreview fileRef={metadata?.fileRef} file_path={metadata?.file_path} content={content} />;
+    } else if (content_type === 'ppt') {
+      return (
+        <PptViewer
+          fileRef={metadata?.fileRef}
+          file_path={metadata?.file_path}
+          content={content}
+          workspace={metadata?.workspace}
+        />
+      );
+    } else if (content_type === 'word') {
+      return (
+        <OfficeDocPreview
+          fileRef={metadata?.fileRef}
+          file_path={metadata?.file_path}
+          content={content}
+          workspace={metadata?.workspace}
+        />
+      );
+    } else if (content_type === 'excel') {
+      return (
+        <ExcelPreview
+          fileRef={metadata?.fileRef}
+          file_path={metadata?.file_path}
+          content={content}
+          workspace={metadata?.workspace}
+        />
+      );
+    } else if (content_type === 'image') {
+      return (
+        <ImagePreview
+          fileRef={metadata?.fileRef}
+          file_path={metadata?.file_path}
+          content={content}
+          file_name={metadata?.file_name || metadata?.title}
+          workspace={metadata?.workspace}
+        />
+      );
+    } else if (content_type === 'url') {
+      // URL 预览模式 / URL preview mode
+      return <URLViewer url={content} title={metadata?.title} />;
+    }
+
+    return null;
+  };
+
+  // 将 tabs 转换为 PreviewTab 类型 / Convert tabs to PreviewTab type
+  const previewTabs: PreviewTab[] = tabs.map((tab) => ({
+    id: tab.id,
+    title: tab.title,
+    isDirty: tab.isDirty,
+    favicon: tab.content_type === 'browser' ? tab.metadata?.favicon : undefined,
+    agentActive: tab.content_type === 'browser' ? tab.metadata?.agentActive : undefined,
+  }));
+
+  // 浏览器 tab 常驻挂载，切 tab 不销毁 webview / Browser tabs stay mounted across switches
+  const browserTabs = tabs.filter((tab) => tab.content_type === 'browser');
+
+  // 文件 tab 常驻挂载层（不含浏览器 tab）：所有已打开文件的内容一直挂载，切换只切可见性。
+  const contentTabs = tabs.filter((tab) => tab.content_type !== 'browser');
+  const fileContentActive = contentTabs.some((tab) => tab.id === activeTabId);
+
+  // 空态守卫放在所有 hooks 之后，保持 hooks 顺序恒定（面板可常驻挂载）。
+  if (!isOpen || !activeTab) return null;
+
+  return (
+    <PreviewToolbarExtrasProvider value={toolbarExtrasContextValue}>
+      {/* bg-1 是必需的：面板必须自己铺满底色，不能依赖外层容器
+          bg-1 is required: the panel paints its own background rather than
+          relying on an outer container, so no window backdrop shows through. */}
+      <div className='h-full flex flex-col bg-1'>
+        {messageContextHolder}
+
+        {/* 确认对话框 / Confirmation modals */}
+        {/* eslint-disable-next-line max-len */}
+        <PreviewConfirmModals
+          closeTabConfirm={closeTabConfirm}
+          onSaveAndCloseTab={handleSaveAndCloseTab}
+          onCloseWithoutSave={handleCloseWithoutSave}
+          onCancelCloseTab={handleCancelCloseTab}
+        />
+
+        {/* Tab 栏 / Tab bar */}
+        {/* eslint-disable-next-line max-len */}
+        <PreviewTabs
+          tabs={previewTabs}
+          activeTabId={activeTabId}
+          tabFadeState={tabFadeState}
+          tabsContainerRef={tabsContainerRef}
+          onSwitchTab={switchTab}
+          onCloseTab={handleCloseTab}
+          onContextMenu={handleTabContextMenu}
+          onClosePanel={closePreview}
+          // 只要面板里已经有任意 tab（文件或浏览器），就露出「新建浏览器 tab」的加号，
+          // 不必等用户先手动开过一次浏览器。面板本身为空时才隐藏，避免出现一个没有
+          // 上下文的孤立加号。
+          // Show the "new browser tab" plus as soon as the panel holds any tab (file or
+          // browser) instead of requiring the user to open a browser first. It stays
+          // hidden only while the panel is empty, so the plus never appears alone.
+          onNewBrowserTab={previewTabs.length > 0 ? handleNewBrowserTab : undefined}
+        />
+
+        {/* 工具栏（URL / 浏览器 类型不显示工具栏，因为不需要下载/编辑等功能）
+            Toolbar (hidden for URL and browser types — no download/edit needed) */}
+        {content_type !== 'url' && content_type !== 'browser' && !metadata?.missingFile && (
+          <PreviewToolbar
+            content_type={content_type as PreviewContentType}
+            isMarkdown={isMarkdown}
+            isHTML={isHTML}
+            viewMode={viewMode}
+            isSplitScreenEnabled={isSplitScreenEnabled}
+            file_name={metadata?.file_name || activeTab.title}
+            showOpenInSystemButton={showOpenInSystemButton}
+            historyTarget={historyTarget}
+            snapshotSaving={snapshotSaving}
+            onViewModeChange={(mode) => {
+              setViewMode(mode);
+              setIsSplitScreenEnabled(false); // 切换视图模式时关闭分屏 / Disable split when switching view mode
+            }}
+            onSplitScreenToggle={() => setIsSplitScreenEnabled(!isSplitScreenEnabled)}
+            onSaveSnapshot={handleSaveSnapshot}
+            onRefreshHistory={refreshHistory}
+            renderHistoryDropdown={renderHistoryDropdown}
+            onOpenInSystem={handleOpenInSystem}
+            onDownload={handleDownload}
+            onDownloadAsPdf={handleDownloadAsPdf}
+            onDownloadAsWord={handleDownloadAsWord}
+            onClose={closePreview}
+            inspectMode={inspectMode}
+            onInspectModeToggle={() => setInspectMode(!inspectMode)}
+            leftExtra={toolbarExtras?.left}
+            rightExtra={toolbarExtras?.right}
+          />
+        )}
+
+        {metadata?.truncated && (
+          <div className='sticky top-0 z-1 px-16px py-10px text-12px bg-warning-1 text-warning-7 border-b border-warning-3'>
+            {t('preview.truncatedBanner')}
+          </div>
+        )}
+
+        {/* 文件 tab 常驻挂载层：切换只切可见性，webview/monaco 等不重建
+            File tab layer: always mounted, switching toggles visibility only */}
+        {contentTabs.length > 0 && (
+          <div className='relative flex-1 overflow-hidden' style={{ display: fileContentActive ? undefined : 'none' }}>
+            {contentTabs.map((tab) => {
+              const isTabActive = tab.id === activeTabId;
+              return (
+                <div
+                  key={tab.id}
+                  className='absolute inset-0'
+                  style={{
+                    visibility: isTabActive ? 'visible' : 'hidden',
+                    pointerEvents: isTabActive ? undefined : 'none',
+                  }}
+                >
+                  {renderTabContent(tab, isTabActive)}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* 浏览器层：常驻挂载，切 tab 不重新加载页面
+            Browser layer: always mounted so tab switches don't reload pages */}
+        <BrowserTabLayer browserTabs={browserTabs} activeTabId={activeTabId} updateTab={updateTab} />
+
+        {/* Tab 右键菜单 / Tab context menu */}
+        {/* eslint-disable-next-line max-len */}
+        <PreviewContextMenu
+          contextMenu={contextMenu}
+          tabs={previewTabs}
+          currentTheme={currentTheme}
+          onClose={() => setContextMenu({ show: false, x: 0, y: 0, tabId: null })}
+          onCloseLeft={handleCloseLeft}
+          onCloseRight={handleCloseRight}
+          onCloseOthers={handleCloseOthers}
+          onCloseAll={handleCloseAll}
+        />
+      </div>
+    </PreviewToolbarExtrasProvider>
+  );
+};
+
+export default PreviewPanel;

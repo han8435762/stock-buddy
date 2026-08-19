@@ -1,0 +1,9 @@
+Use case: logo-brand
+Asset type: StockBuddy desktop application icon, Windows/macOS installer and login screen
+Primary request: Create a distinctive, simple, vector-friendly square app icon for a local-first company and investment research assistant named StockBuddy.
+Subject: a refined abstract mark combining a rising market line, a subtle document/page, and a friendly companion spark; no letters or words.
+Style/medium: crisp premium flat vector logo, bold geometric shapes, excellent legibility at 16px, centered emblem inside a rounded-square tile.
+Composition/framing: exact 1:1 icon composition with generous padding, no border outside the rounded-square tile.
+Lighting/mood: calm, trustworthy, professional.
+Color palette: deep institutional navy #102A34, teal #246B78, light mint #E8F1F3, tiny warm gold accent #A16207.
+Constraints: no text, no gradients, no photorealism, no 3D, no watermark, no mockup, no shadows outside the icon, use clean solid colors and high contrast.

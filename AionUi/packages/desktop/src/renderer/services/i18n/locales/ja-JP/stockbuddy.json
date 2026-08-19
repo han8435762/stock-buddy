@@ -1,0 +1,33 @@
+{
+  "nav": {
+    "newResearch": "New Company Research",
+    "companies": "My Companies",
+    "updates": "Update Center",
+    "skills": "Research Skills",
+    "advancedFeatures": "Advanced Features",
+    "localFirst": "Local First",
+    "localFirstHint": "Data is stored on this computer",
+    "placeholder": "Under Construction",
+    "placeholderDescription": "This page will be implemented in a later phase.",
+    "modelSettings": "モデル設定"
+  },
+  "materialModal": {
+    "title": "この研究で使用する資料を選択",
+    "searchPlaceholder": "ファイル名、年、種類で検索",
+    "selectedCount": "{{count}} 件選択中",
+    "clear": "クリア",
+    "apply": "選択を適用",
+    "empty": "一致する資料がありません"
+  },
+  "newResearch": {
+    "noCompanyTitle": "まだ会社がありません",
+    "noCompanyDesc": "開始前に会社を追加して、独立した資料ライブラリを作成してください。",
+    "goAddCompany": "会社を追加",
+    "claudeUnavailableTitle": "Claude Code が利用できません",
+    "claudeUnavailableDesc": "利用可能な Claude Code が見つからないか、モデルプロバイダーが設定されていないため、研究が失敗する可能性があります。",
+    "goConfigureModel": "モデルを設定",
+    "continueCreate": "それでも作成",
+    "promptResearchCompany": "この会社を調査する",
+    "promptRecentAnnouncements": "直近3か月の公告を要約する"
+  }
+}

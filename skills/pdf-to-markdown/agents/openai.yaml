@@ -1,0 +1,4 @@
+interface:
+  display_name: "PDF 转 Markdown"
+  short_description: "将原生文本 PDF 快速转换为结构化 Markdown"
+  default_prompt: "Use $pdf-to-markdown to convert this PDF into a Markdown file and report any pages that need OCR."

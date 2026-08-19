@@ -1,0 +1,33 @@
+{
+  "nav": {
+    "newResearch": "New Company Research",
+    "companies": "My Companies",
+    "updates": "Update Center",
+    "skills": "Research Skills",
+    "advancedFeatures": "Advanced Features",
+    "localFirst": "Local First",
+    "localFirstHint": "Data is stored on this computer",
+    "placeholder": "Under Construction",
+    "placeholderDescription": "This page will be implemented in a later phase.",
+    "modelSettings": "모델 설정"
+  },
+  "materialModal": {
+    "title": "이 연구에 사용할 자료 선택",
+    "searchPlaceholder": "파일명, 연도 또는 유형으로 검색",
+    "selectedCount": "{{count}}개 선택됨",
+    "clear": "지우기",
+    "apply": "선택 적용",
+    "empty": "일치하는 자료가 없습니다"
+  },
+  "newResearch": {
+    "noCompanyTitle": "아직 회사가 없습니다",
+    "noCompanyDesc": "시작하기 전에 회사를 추가하여 독립적인 자료 라이브러리를 만드세요.",
+    "goAddCompany": "회사 추가하기",
+    "claudeUnavailableTitle": "Claude Code를 사용할 수 없습니다",
+    "claudeUnavailableDesc": "사용 가능한 Claude Code가 없거나 모델 공급자가 구성되지 않아 연구가 실패할 수 있습니다.",
+    "goConfigureModel": "모델 구성하기",
+    "continueCreate": "그래도 만들기",
+    "promptResearchCompany": "이 회사를 조사해 주세요",
+    "promptRecentAnnouncements": "최근 3개월 공시를 요약해 주세요"
+  }
+}

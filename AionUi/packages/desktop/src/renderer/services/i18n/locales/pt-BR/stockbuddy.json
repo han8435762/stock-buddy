@@ -1,0 +1,33 @@
+{
+  "nav": {
+    "newResearch": "New Company Research",
+    "companies": "My Companies",
+    "updates": "Update Center",
+    "skills": "Research Skills",
+    "advancedFeatures": "Advanced Features",
+    "localFirst": "Local First",
+    "localFirstHint": "Data is stored on this computer",
+    "placeholder": "Under Construction",
+    "placeholderDescription": "This page will be implemented in a later phase.",
+    "modelSettings": "Configurações do modelo"
+  },
+  "materialModal": {
+    "title": "Selecionar materiais para esta pesquisa",
+    "searchPlaceholder": "Buscar por nome do arquivo, ano ou tipo",
+    "selectedCount": "{{count}} selecionados",
+    "clear": "Limpar",
+    "apply": "Aplicar seleção",
+    "empty": "Nenhum material correspondente"
+  },
+  "newResearch": {
+    "noCompanyTitle": "Ainda não há empresas",
+    "noCompanyDesc": "Adicione uma empresa primeiro para criar a biblioteca de pesquisa dela antes de começar.",
+    "goAddCompany": "Adicionar empresa",
+    "claudeUnavailableTitle": "Claude Code não está pronto",
+    "claudeUnavailableDesc": "O Claude Code está indisponível ou nenhum provedor de modelo foi configurado, então a pesquisa pode falhar.",
+    "goConfigureModel": "Configurar modelo",
+    "continueCreate": "Criar mesmo assim",
+    "promptResearchCompany": "Pesquisar esta empresa",
+    "promptRecentAnnouncements": "Resumir os comunicados dos últimos três meses"
+  }
+}

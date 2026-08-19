@@ -1,0 +1,33 @@
+{
+  "nav": {
+    "newResearch": "New Company Research",
+    "companies": "My Companies",
+    "updates": "Update Center",
+    "skills": "Research Skills",
+    "advancedFeatures": "Advanced Features",
+    "localFirst": "Local First",
+    "localFirstHint": "Data is stored on this computer",
+    "placeholder": "Under Construction",
+    "placeholderDescription": "This page will be implemented in a later phase.",
+    "modelSettings": "模型設定"
+  },
+  "materialModal": {
+    "title": "選擇本次研究可以使用的資料",
+    "searchPlaceholder": "搜尋檔名、年份或資料類型",
+    "selectedCount": "已選擇 {{count}} 份資料",
+    "clear": "清空",
+    "apply": "套用所選資料",
+    "empty": "沒有找到符合的資料"
+  },
+  "newResearch": {
+    "noCompanyTitle": "尚未新增公司",
+    "noCompanyDesc": "開始研究前請先新增一家公司，以建立獨立的資料庫。",
+    "goAddCompany": "前往新增公司",
+    "claudeUnavailableTitle": "Claude Code 無法使用",
+    "claudeUnavailableDesc": "未偵測到可用的 Claude Code 或尚未設定模型供應商，研究可能無法進行。",
+    "goConfigureModel": "前往設定模型",
+    "continueCreate": "仍要建立",
+    "promptResearchCompany": "研究一下這家公司",
+    "promptRecentAnnouncements": "總結一下最近三個月的公告"
+  }
+}

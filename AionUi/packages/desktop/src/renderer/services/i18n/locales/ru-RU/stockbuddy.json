@@ -1,0 +1,33 @@
+{
+  "nav": {
+    "newResearch": "New Company Research",
+    "companies": "My Companies",
+    "updates": "Update Center",
+    "skills": "Research Skills",
+    "advancedFeatures": "Advanced Features",
+    "localFirst": "Local First",
+    "localFirstHint": "Data is stored on this computer",
+    "placeholder": "Under Construction",
+    "placeholderDescription": "This page will be implemented in a later phase.",
+    "modelSettings": "Настройки модели"
+  },
+  "materialModal": {
+    "title": "Выберите материалы для этого исследования",
+    "searchPlaceholder": "Поиск по имени файла, году или типу",
+    "selectedCount": "Выбрано: {{count}}",
+    "clear": "Очистить",
+    "apply": "Применить выбор",
+    "empty": "Подходящие материалы не найдены"
+  },
+  "newResearch": {
+    "noCompanyTitle": "Компаний пока нет",
+    "noCompanyDesc": "Сначала добавьте компанию, чтобы создать отдельную библиотеку материалов.",
+    "goAddCompany": "Добавить компанию",
+    "claudeUnavailableTitle": "Claude Code недоступен",
+    "claudeUnavailableDesc": "Claude Code недоступен или провайдер моделей не настроен, поэтому исследование может не выполниться.",
+    "goConfigureModel": "Настроить модель",
+    "continueCreate": "Всё равно создать",
+    "promptResearchCompany": "Изучить эту компанию",
+    "promptRecentAnnouncements": "Сводка объявлений за последние три месяца"
+  }
+}

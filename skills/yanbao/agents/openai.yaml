@@ -1,0 +1,4 @@
+interface:
+  display_name: "A股深度研报"
+  short_description: "生成涵盖行业、财务排雷、情景估值的完整A股深度研报"
+  default_prompt: "使用 $yanbao 对指定A股公司完成深度研究并生成完整研报。"

@@ -1,0 +1,459 @@
+/**
+ * @license
+ * Copyright 2025 AionUi (aionui.com)
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import { act, renderHook } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { localFileRef } from '@/common/types/chatFile';
+import type { IMcpServer } from '@/common/config/storage';
+import { useGuidSend, type GuidSendDeps } from '@/renderer/pages/guid/hooks/useGuidSend';
+
+const createConversationInvokeMock = vi.fn();
+const getResearchWorkspaceDirInvokeMock = vi.fn();
+const getRootDirInvokeMock = vi.fn();
+const swrMutateMock = vi.fn();
+
+vi.mock('@/common', () => ({
+  ipcBridge: {
+    stockbuddy: {
+      getResearchWorkspaceDir: {
+        invoke: (...args: unknown[]) => getResearchWorkspaceDirInvokeMock(...args),
+      },
+      getRootDir: {
+        invoke: (...args: unknown[]) => getRootDirInvokeMock(...args),
+      },
+    },
+    conversation: {
+      create: {
+        invoke: (...args: unknown[]) => createConversationInvokeMock(...args),
+      },
+    },
+  },
+}));
+
+vi.mock('@/renderer/utils/emitter', () => ({
+  emitter: {
+    emit: vi.fn(),
+  },
+}));
+
+vi.mock('swr', () => ({
+  mutate: (...args: unknown[]) => swrMutateMock(...args),
+}));
+
+vi.mock('@/renderer/utils/workspace/workspaceHistory', () => ({
+  updateWorkspaceTime: vi.fn(),
+}));
+
+vi.mock('@arco-design/web-react', () => ({
+  Message: {
+    warning: vi.fn(),
+    error: vi.fn(),
+  },
+}));
+
+const createDeps = (): GuidSendDeps => ({
+  input: 'hello',
+  setInput: vi.fn(),
+  files: [],
+  setFiles: vi.fn(),
+  dir: '',
+  setDir: vi.fn(),
+  setLoading: vi.fn(),
+  loading: false,
+  researchScope: 'all' as const,
+  selectedMaterialIds: [],
+  companyResearch: false,
+  selectedAssistantId: 'assistant-1',
+  selectedAssistantBackend: 'claude',
+  selectedMode: 'bypassPermissions',
+  selectedAcpModel: 'claude-opus',
+  currentAcpCachedModelInfo: null,
+  current_model: undefined,
+  guidDisabledBuiltinSkills: undefined,
+  guidEnabledSkills: undefined,
+  assistantDefaultSkillIds: undefined,
+  assistantDefaultDisabledBuiltinSkillIds: undefined,
+  availableMcpServers: [{ id: 'mcp-user', name: 'User MCP', enabled: true, builtin: false } as IMcpServer],
+  selectedMcpServerIds: ['mcp-user'],
+  assistantDefaultMcpIds: undefined,
+  isGoogleAuth: false,
+  setMentionOpen: vi.fn(),
+  setMentionQuery: vi.fn(),
+  setMentionSelectorOpen: vi.fn(),
+  setMentionActiveIndex: vi.fn(),
+  navigate: vi.fn(() => Promise.resolve()) as never,
+  t: vi.fn((key: string, options?: { defaultValue?: string }) => options?.defaultValue || key) as never,
+  localeKey: 'zh-CN',
+});
+
+describe('useGuidSend', () => {
+  beforeEach(() => {
+    createConversationInvokeMock.mockReset();
+    createConversationInvokeMock.mockResolvedValue({ id: 'conv-1' });
+    getResearchWorkspaceDirInvokeMock.mockReset();
+    getResearchWorkspaceDirInvokeMock.mockResolvedValue('C:\\Users\\admin\\StockBuddy\\companies');
+    getRootDirInvokeMock.mockReset();
+    getRootDirInvokeMock.mockResolvedValue('C:\\Users\\admin\\StockBuddy\\companies');
+    swrMutateMock.mockReset();
+    swrMutateMock.mockResolvedValue(undefined);
+    sessionStorage.clear();
+  });
+
+  it('passes selected mode into assistant conversation overrides when creating a preset ACP conversation', async () => {
+    const deps = createDeps();
+    (deps as any).selectedThoughtLevelValue = 'high';
+
+    const { result } = renderHook(() => useGuidSend(deps));
+
+    await act(async () => {
+      await result.current.handleSend();
+    });
+
+    expect(createConversationInvokeMock).toHaveBeenCalledTimes(1);
+    const payload = createConversationInvokeMock.mock.calls[0][0];
+    expect(payload.type).toBeUndefined();
+    expect('model' in payload).toBe(false);
+    expect(payload.assistant?.conversation_overrides?.permission).toBe('bypassPermissions');
+    expect(payload.assistant?.conversation_overrides?.model).toBe('claude-opus');
+    expect(payload.assistant?.conversation_overrides?.thought_level).toBe('high');
+    expect(payload.extra.backend).toBeUndefined();
+    expect(payload.extra.agent_name).toBeUndefined();
+    expect(payload.extra.agent_id).toBeUndefined();
+    expect(payload.extra.custom_agent_id).toBeUndefined();
+    expect(payload.extra.preset_rules).toBeUndefined();
+    expect(payload.extra.preset_context).toBeUndefined();
+    expect(payload.extra.session_mode).toBeUndefined();
+    expect(payload.extra.current_model_id).toBeUndefined();
+    expect(payload.extra.preset_assistant_id).toBeUndefined();
+    expect(swrMutateMock).toHaveBeenCalledWith('guid.assistant.detail.assistant-1.zh-CN');
+    expect(swrMutateMock).toHaveBeenCalledWith('assistants.list');
+  });
+
+  it('falls back to assistant default skill and MCP ids for preset conversations before local Guid overrides exist', async () => {
+    const deps = createDeps();
+    deps.guidEnabledSkills = undefined;
+    deps.guidDisabledBuiltinSkills = undefined;
+    deps.assistantDefaultSkillIds = ['assistant-skill'];
+    deps.assistantDefaultDisabledBuiltinSkillIds = ['builtin-skill'];
+    deps.selectedMcpServerIds = undefined;
+    deps.assistantDefaultMcpIds = ['mcp-user'];
+
+    const { result } = renderHook(() => useGuidSend(deps));
+
+    await act(async () => {
+      await result.current.handleSend();
+    });
+
+    const payload = createConversationInvokeMock.mock.calls[0][0];
+    expect(payload.assistant?.conversation_overrides?.skill_ids).toEqual(['assistant-skill']);
+    expect(payload.assistant?.conversation_overrides?.disabled_builtin_skill_ids).toEqual(['builtin-skill']);
+    expect(payload.assistant?.conversation_overrides?.mcp_ids).toEqual(['mcp-user']);
+    expect(payload.extra.selected_mcp_server_ids).toEqual(['mcp-user']);
+  });
+
+  it('preserves builtin MCP ids in assistant overrides while only sending user MCP ids to runtime selection', async () => {
+    const deps = createDeps();
+    deps.availableMcpServers = [
+      { id: 'mcp-user', name: 'User MCP', enabled: true, builtin: false } as IMcpServer,
+      { id: 'builtin-mcp', name: 'Builtin MCP', enabled: true, builtin: true } as IMcpServer,
+    ];
+    deps.selectedMcpServerIds = ['mcp-user', 'builtin-mcp'];
+
+    const { result } = renderHook(() => useGuidSend(deps));
+
+    await act(async () => {
+      await result.current.handleSend();
+    });
+
+    const payload = createConversationInvokeMock.mock.calls[0][0];
+    expect(payload.assistant?.conversation_overrides?.mcp_ids).toEqual(['mcp-user', 'builtin-mcp']);
+    expect(payload.extra.selected_mcp_server_ids).toEqual(['mcp-user']);
+    expect(payload.extra.selected_session_mcp_servers).toEqual([expect.objectContaining({ id: 'builtin-mcp' })]);
+  });
+
+  it('does not write legacy preset_assistant_id for preset assistant sends', async () => {
+    const deps = createDeps();
+
+    const { result } = renderHook(() => useGuidSend(deps));
+
+    await act(async () => {
+      await result.current.handleSend();
+    });
+
+    const payload = createConversationInvokeMock.mock.calls[0][0];
+    expect(payload.assistant?.id).toBe('assistant-1');
+    expect(payload.extra.preset_assistant_id).toBeUndefined();
+  });
+
+  it('forwards local skill overrides through assistant conversation overrides for ACP assistants', async () => {
+    const deps = createDeps();
+    deps.guidEnabledSkills = ['pdf-reader'];
+    deps.guidDisabledBuiltinSkills = ['todo-tracker'];
+
+    const { result } = renderHook(() => useGuidSend(deps));
+
+    await act(async () => {
+      await result.current.handleSend();
+    });
+
+    const payload = createConversationInvokeMock.mock.calls[0][0];
+    expect(payload.assistant?.id).toBe('assistant-1');
+    expect(payload.assistant?.conversation_overrides?.skill_ids).toEqual(['pdf-reader']);
+    expect(payload.assistant?.conversation_overrides?.disabled_builtin_skill_ids).toEqual(['todo-tracker']);
+  });
+
+  it('forwards local skill overrides for generated Aion CLI assistants through assistant conversation overrides', async () => {
+    const deps = createDeps();
+    deps.selectedAssistantId = 'bare:aionrs';
+    deps.selectedAssistantBackend = 'aionrs';
+    deps.current_model = { provider_id: 'openai', model: 'gemini-2.5-pro', use_model: 'gemini-2.5-pro' } as never;
+    deps.guidEnabledSkills = ['pdf-reader'];
+    deps.guidDisabledBuiltinSkills = ['todo-tracker'];
+
+    const { result } = renderHook(() => useGuidSend(deps));
+
+    await act(async () => {
+      await result.current.handleSend();
+    });
+
+    const payload = createConversationInvokeMock.mock.calls[0][0];
+    expect(payload.type).toBeUndefined();
+    expect(payload.model).toBe(deps.current_model);
+    expect(payload.assistant?.id).toBe('bare:aionrs');
+    expect(payload.assistant?.conversation_overrides?.skill_ids).toEqual(['pdf-reader']);
+    expect(payload.assistant?.conversation_overrides?.disabled_builtin_skill_ids).toEqual(['todo-tracker']);
+    expect(payload.extra.session_mode).toBeUndefined();
+  });
+
+  it('does not write legacy preset_assistant_id for generated Aion CLI assistant conversations', async () => {
+    const deps = createDeps();
+    deps.selectedAssistantId = 'bare:aionrs';
+    deps.selectedAssistantBackend = 'aionrs';
+    deps.current_model = { provider_id: 'openai', model: 'gemini-2.5-pro', use_model: 'gemini-2.5-pro' } as never;
+
+    const { result } = renderHook(() => useGuidSend(deps));
+
+    await act(async () => {
+      await result.current.handleSend();
+    });
+
+    const payload = createConversationInvokeMock.mock.calls[0][0];
+    expect(payload.assistant?.id).toBe('bare:aionrs');
+    expect(payload.extra.preset_assistant_id).toBeUndefined();
+  });
+
+  it('does not write legacy preset_assistant_id for generated ACP assistant conversations', async () => {
+    const deps = createDeps();
+    deps.selectedAssistantId = 'bare:claude';
+    deps.selectedAssistantBackend = 'claude';
+    deps.current_model = { provider_id: 'anthropic', model: 'claude-sonnet', use_model: 'claude-sonnet' } as never;
+
+    const { result } = renderHook(() => useGuidSend(deps));
+
+    await act(async () => {
+      await result.current.handleSend();
+    });
+
+    const payload = createConversationInvokeMock.mock.calls[0][0];
+    expect(payload.assistant?.id).toBe('bare:claude');
+    expect(payload.type).toBeUndefined();
+    expect('model' in payload).toBe(false);
+    expect(payload.extra.preset_assistant_id).toBeUndefined();
+    expect(payload.extra.backend).toBeUndefined();
+  });
+
+  it('does not hand a CLI agent the aionrs provider model on its first turn', async () => {
+    // Reproduces the first-use failure: before the agent's catalog has been
+    // probed there is no ACP model to offer, and the provider selection used to
+    // fill the gap. A brand new Antigravity conversation therefore started on
+    // `gemini-3.1-pro-preview` — a model agy has never heard of — and the turn
+    // died with USER_LLM_PROVIDER_MODEL_NOT_FOUND. Once the catalog landed the
+    // earlier option won again, which is why it only ever showed up on a fresh
+    // machine.
+    const deps = createDeps();
+    deps.selectedAssistantBackend = 'antigravity';
+    deps.selectedAcpModel = null;
+    deps.currentAcpCachedModelInfo = null;
+    deps.current_model = { id: 'p1', name: 'Gemini', use_model: 'gemini-3.1-pro-preview' } as never;
+
+    const { result } = renderHook(() => useGuidSend(deps));
+    await act(async () => {
+      await result.current.handleSend();
+    });
+
+    const payload = createConversationInvokeMock.mock.calls[0][0];
+    // No model at all: the agent then starts on its own default, which is what
+    // "the user has not picked one" actually means.
+    expect(payload.assistant.conversation_overrides.model).toBeUndefined();
+  });
+
+  it('still gives aionrs its provider model', async () => {
+    // The fallback exists for aionrs, whose model IS the provider selection.
+    const deps = createDeps();
+    deps.selectedAssistantBackend = 'aionrs';
+    deps.selectedAcpModel = null;
+    deps.currentAcpCachedModelInfo = null;
+    deps.current_model = { id: 'p1', name: 'Gemini', use_model: 'gemini-3.1-pro-preview' } as never;
+
+    const { result } = renderHook(() => useGuidSend(deps));
+    await act(async () => {
+      await result.current.handleSend();
+    });
+
+    const payload = createConversationInvokeMock.mock.calls[0][0];
+    expect(payload.assistant.conversation_overrides.model).toBe('gemini-3.1-pro-preview');
+  });
+
+  it('prefers the agent catalog model once it has been probed', async () => {
+    // The path that makes this bug invisible after first use.
+    const deps = createDeps();
+    deps.selectedAssistantBackend = 'antigravity';
+    deps.selectedAcpModel = null;
+    deps.currentAcpCachedModelInfo = {
+      current_model_id: 'gemini-3.6-flash-low',
+      available_models: [{ id: 'gemini-3.6-flash-low', label: 'low' }],
+    } as never;
+    deps.current_model = { id: 'p1', name: 'Gemini', use_model: 'gemini-3.1-pro-preview' } as never;
+
+    const { result } = renderHook(() => useGuidSend(deps));
+    await act(async () => {
+      await result.current.handleSend();
+    });
+
+    const payload = createConversationInvokeMock.mock.calls[0][0];
+    expect(payload.assistant.conversation_overrides.model).toBe('gemini-3.6-flash-low');
+  });
+
+  it('binds company_id and company_name when the workspace is a company folder', async () => {
+    const deps = createDeps();
+    deps.dir = '/Users/me/StockBuddy/companies/002461_珠江啤酒';
+
+    const { result } = renderHook(() => useGuidSend(deps));
+
+    await act(async () => {
+      await result.current.handleSend();
+    });
+
+    const payload = createConversationInvokeMock.mock.calls[0][0];
+    expect(payload.extra.company_id).toBe('002461');
+    expect(payload.extra.company_name).toBe('珠江啤酒');
+    expect(payload.extra.workspace).toBe('/Users/me/StockBuddy/companies/002461_珠江啤酒');
+  });
+
+  it('uses StockBuddy/companies when company research starts without a selected company', async () => {
+    const deps = createDeps();
+    deps.companyResearch = true;
+    deps.dir = '';
+
+    const { result } = renderHook(() => useGuidSend(deps));
+
+    await act(async () => {
+      await result.current.handleSend();
+    });
+
+    const payload = createConversationInvokeMock.mock.calls[0][0];
+    expect(getResearchWorkspaceDirInvokeMock).toHaveBeenCalledTimes(1);
+    expect(payload.extra.workspace).toBe('C:\\Users\\admin\\StockBuddy\\companies');
+    expect(payload.extra.custom_workspace).toBe(true);
+    expect(payload.extra.company_id).toBeUndefined();
+  });
+
+  it('falls back to the known company-library root when the new workspace provider is unavailable', async () => {
+    const deps = createDeps();
+    deps.companyResearch = true;
+    getResearchWorkspaceDirInvokeMock.mockRejectedValue(new Error('Route not found'));
+
+    const { result } = renderHook(() => useGuidSend(deps));
+
+    await act(async () => {
+      await result.current.handleSend();
+    });
+
+    const payload = createConversationInvokeMock.mock.calls[0][0];
+    expect(getRootDirInvokeMock).toHaveBeenCalledTimes(1);
+    expect(payload.extra.workspace).toBe('C:\\Users\\admin\\StockBuddy\\companies');
+    expect(payload.extra.custom_workspace).toBe(true);
+  });
+
+  it('does not bind a company for an empty or non-company workspace', async () => {
+    const deps = createDeps();
+    deps.dir = '/tmp/some-project';
+
+    const { result } = renderHook(() => useGuidSend(deps));
+
+    await act(async () => {
+      await result.current.handleSend();
+    });
+
+    const payload = createConversationInvokeMock.mock.calls[0][0];
+    expect(payload.extra.company_id).toBeUndefined();
+    expect(payload.extra.company_name).toBeUndefined();
+  });
+
+  it('writes research_scope, material metadata and attached refs when scope is selected', async () => {
+    const deps = createDeps();
+    deps.dir = '/Users/me/StockBuddy/companies/002461_珠江啤酒';
+    deps.researchScope = 'selected';
+    deps.selectedMaterialIds = ['m1', 'm2'];
+    // Selected materials live in the shared `files` list (merged by
+    // useMaterialAttachmentSync), exactly like picked/uploaded files.
+    deps.files = [localFileRef('/a/2025年报.md'), localFileRef('/b/回购公告.md')];
+
+    const { result } = renderHook(() => useGuidSend(deps));
+
+    await act(async () => {
+      await result.current.handleSend();
+    });
+
+    const payload = createConversationInvokeMock.mock.calls[0][0];
+    expect(payload.extra.research_scope).toBe('selected');
+    expect(payload.extra.selected_material_ids).toEqual(['m1', 'm2']);
+    expect(payload.extra.default_files).toEqual(['/a/2025年报.md', '/b/回购公告.md']);
+    expect(payload.extra.attached_refs).toEqual([localFileRef('/a/2025年报.md'), localFileRef('/b/回购公告.md')]);
+
+    // First message carries the same refs so Claude Code receives them on turn 1.
+    const initial = JSON.parse(sessionStorage.getItem('acp_initial_message_conv-1')!);
+    expect(initial.files).toEqual([localFileRef('/a/2025年报.md'), localFileRef('/b/回购公告.md')]);
+  });
+
+  it('does not attach material refs when scope is all', async () => {
+    const deps = createDeps();
+    deps.dir = '/Users/me/StockBuddy/companies/002461_珠江啤酒';
+    deps.researchScope = 'all';
+    deps.files = [];
+
+    const { result } = renderHook(() => useGuidSend(deps));
+
+    await act(async () => {
+      await result.current.handleSend();
+    });
+
+    const payload = createConversationInvokeMock.mock.calls[0][0];
+    expect(payload.extra.research_scope).toBe('all');
+    expect(payload.extra.selected_material_ids).toBeUndefined();
+    expect(payload.extra.default_files).toEqual([]);
+    expect(payload.extra.attached_refs).toEqual([]);
+
+    const initial = JSON.parse(sessionStorage.getItem('acp_initial_message_conv-1')!);
+    expect(initial.files).toBeUndefined();
+  });
+
+  it('does not create a conversation without assistant identity', async () => {
+    const deps = createDeps();
+    deps.selectedAssistantId = null;
+    deps.selectedAssistantBackend = 'claude';
+
+    const { result } = renderHook(() => useGuidSend(deps));
+
+    expect(result.current.isButtonDisabled).toBe(true);
+
+    await act(async () => {
+      await result.current.handleSend();
+    });
+
+    expect(createConversationInvokeMock).not.toHaveBeenCalled();
+  });
+});

@@ -1,0 +1,23 @@
+{
+  "name": "StockBuddy",
+  "short_name": "StockBuddy",
+  "description": "StockBuddy 本地优先的 A 股个股研究工作台（WebUI for mobile and desktop browsers）。",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#ffffff",
+  "theme_color": "#4E5969",
+  "icons": [
+    {
+      "src": "./pwa/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "./pwa/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

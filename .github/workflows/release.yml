@@ -1,0 +1,398 @@
+name: Release Desktop Builds
+
+# 一键发版:在 GitHub Actions 页面点 "Run workflow",
+# 勾选要打包的平台、输入版本号,自动打 tag、创建 GitHub Release、
+# 编译打包对应平台安装包并上传到 Release。
+#
+# macOS 默认关闭(改由本机构建,节省 10x 计费的 macOS runner 分钟);
+# Windows / Linux 默认开启。
+#
+# 流程:create-release(先建空 Release)-> 各平台并行 build
+# -> 每个平台把本 job 的产物上传到 GitHub Release 和七牛云 Kodo。
+# 不从 GitHub Release 反向下载附件,避免大文件重复传输和无代理时卡住。
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "发版版本号(纯数字,如 2.1.48)"
+        required: true
+        type: string
+      build_windows:
+        description: "构建 Windows 安装包 (NSIS exe)"
+        required: false
+        default: true
+        type: boolean
+      build_macos:
+        description: "构建 macOS 安装包 (DMG) —— 默认关闭,请改用本机构建 + release.sh 上传"
+        required: false
+        default: false
+        type: boolean
+      build_linux:
+        description: "构建 Linux 安装包 (Ubuntu deb)"
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  # 先创建 tag + 空的 GitHub Release,让后续 build job 有地方上传产物。
+  create-release:
+    name: Create tag & release
+    # 至少勾选一个平台才建 Release,避免全不勾选时产生空 Release。
+    if: ${{ inputs.build_windows || inputs.build_macos || inputs.build_linux }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create tag and GitHub Release
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ inputs.version }}"
+          VERSION="${VERSION#v}"
+          git tag "v${VERSION}"
+          git push origin "v${VERSION}"
+          gh release create "v${VERSION}" \
+            --title "StockBuddy v${VERSION}" \
+            --notes "StockBuddy 自动构建产物。未签名 / 未公证：Windows 首次运行可能提示 SmartScreen，macOS 需右键 → 打开，Linux 为 .deb 安装包（适用于 Ubuntu/Debian）。"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-windows:
+    name: Build Windows
+    if: ${{ inputs.build_windows }}
+    needs: create-release
+    runs-on: windows-latest
+    env:
+      QINIU_ACCESS_KEY: ${{ secrets.QINIU_ACCESS_KEY || vars.QINIU_ACCESS_KEY }}
+    defaults:
+      run:
+        working-directory: AionUi
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      # 构建时间优化:缓存 bun 全局依赖缓存,`bun install` 上万依赖命中后毫秒级完成。
+      - name: Cache bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('AionUi/bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
+
+      # 缓存 electron 运行时 + electron-builder 工具链下载(~150MB),避免每次构建重复拉取。
+      - name: Cache Electron & electron-builder downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/AppData/Local/electron/Cache
+            ~/AppData/Local/electron-builder/Cache
+          key: electron-${{ runner.os }}-${{ hashFiles('AionUi/package.json') }}
+          restore-keys: |
+            electron-${{ runner.os }}-
+
+      # 缓存预下载的 bundled 资源(aioncore ~50MB + python ~40MB + hub)。
+      # prepare-aioncore / prepare-bundled-python 都有 manifest 版本校验,
+      # 版本未变时直接从缓存恢复,跳过下载;版本变更时幂等检查会重新下载。
+      - name: Cache bundled resources (aioncore + python + hub)
+        uses: actions/cache@v4
+        with:
+          path: |
+            AionUi/resources/bundled-python
+            AionUi/resources/bundled-aioncore
+            AionUi/resources/hub
+          key: bundled-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('AionUi/package.json', 'AionUi/packages/shared-scripts/src/prepare-bundled-python.js', 'AionUi/packages/shared-scripts/src/prepare-aioncore.js', 'AionUi/scripts/resolveAioncoreVersion.js', 'AionUi/scripts/prepareHubResources.js') }}
+          restore-keys: |
+            bundled-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+        env:
+          HUSKY: "0"
+
+      # 用输入版本覆盖 package.json 的 version(仅影响产物名,不改提交)。
+      # 这样产物名(StockBuddy-{version}-{os}-{arch})与 Release tag 保持一致。
+      - name: Pin build version
+        run: npm pkg set version=${{ inputs.version }}
+
+      - name: Build Windows installer
+        run: bun run build-win:x64:fast
+        env:
+          CI: "true"
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 无代码签名证书时禁用自动签名探测;Windows 出未签名 NSIS 包。
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          HUSKY: "0"
+          # renderer 有上万模块,vite/rollup 默认 2GB heap 会 OOM
+          NODE_OPTIONS: "--max-old-space-size=4096"
+
+      # 直接上传到 create-release 建好的 Release,不占用 artifact 配额。
+      - name: Upload to Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ inputs.version }}"
+          VERSION="${VERSION#v}"
+          # nullglob:未匹配的 glob 展开为空而不是报错(blockmap/latest.yml 可能不存在)。
+          shopt -s nullglob
+          gh release upload "v${VERSION}" \
+            out/StockBuddy-*-win-*.exe \
+            out/latest*.yml \
+            out/*.blockmap \
+            --clobber
+
+      - name: Install Qiniu Node.js SDK
+        if: ${{ env.QINIU_ACCESS_KEY != '' }}
+        working-directory: ${{ github.workspace }}
+        run: npm install --no-save --no-package-lock --ignore-scripts qiniu@7.15.2
+
+      - name: Upload assets to Qiniu Kodo
+        if: ${{ env.QINIU_ACCESS_KEY != '' }}
+        shell: bash
+        env:
+          QINIU_ACCESS_KEY: ${{ secrets.QINIU_ACCESS_KEY || vars.QINIU_ACCESS_KEY }}
+          QINIU_SECRET_KEY: ${{ secrets.QINIU_SECRET_KEY || vars.QINIU_SECRET_KEY }}
+          QINIU_BUCKET: ${{ secrets.QINIU_BUCKET || vars.QINIU_BUCKET }}
+          QINIU_REGION: ${{ secrets.QINIU_REGION || vars.QINIU_REGION }}
+          QINIU_DOMAIN: ${{ secrets.QINIU_DOMAIN || vars.QINIU_DOMAIN }}
+          QINIU_KEY_PREFIX: ${{ secrets.QINIU_KEY_PREFIX || vars.QINIU_KEY_PREFIX }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ inputs.version }}"
+          VERSION="${VERSION#v}"
+          export QINIU_KEY_PREFIX="${QINIU_KEY_PREFIX:-stockbuddy/releases/${VERSION}}"
+          unset QINIU_OBJECT_KEY
+          shopt -s nullglob
+          files=(
+            out/StockBuddy-*-win-*.exe
+            out/latest*.yml
+            out/*.blockmap
+          )
+          [ "${#files[@]}" -gt 0 ] || { echo "No Windows release assets found" >&2; exit 1; }
+          for file in "${files[@]}"; do
+            node ../.github/scripts/upload-to-qiniu.cjs "$file"
+          done
+
+  build-macos:
+    name: Build macOS
+    if: ${{ inputs.build_macos }}
+    needs: create-release
+    runs-on: macos-14
+    env:
+      QINIU_ACCESS_KEY: ${{ secrets.QINIU_ACCESS_KEY || vars.QINIU_ACCESS_KEY }}
+    defaults:
+      run:
+        working-directory: AionUi
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Cache bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('AionUi/bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
+
+      - name: Cache Electron & electron-builder downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/electron/
+            ~/Library/Caches/electron-builder/
+          key: electron-${{ runner.os }}-${{ hashFiles('AionUi/package.json') }}
+          restore-keys: |
+            electron-${{ runner.os }}-
+
+      - name: Cache bundled resources (aioncore + python + hub)
+        uses: actions/cache@v4
+        with:
+          path: |
+            AionUi/resources/bundled-python
+            AionUi/resources/bundled-aioncore
+            AionUi/resources/hub
+          key: bundled-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('AionUi/package.json', 'AionUi/packages/shared-scripts/src/prepare-bundled-python.js', 'AionUi/packages/shared-scripts/src/prepare-aioncore.js', 'AionUi/scripts/resolveAioncoreVersion.js') }}
+          restore-keys: |
+            bundled-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+        env:
+          HUSKY: "0"
+
+      - name: Pin build version
+        run: npm pkg set version=${{ inputs.version }}
+
+      # arm64 / x64 必须分开单架构构建,否则 aioncore 后端二进制
+      # 只会为 arm64 下载一份,x64 包会带上错误架构的后端。
+      - name: Build macOS (arm64 + x64)
+        run: |
+          bun run build-mac:arm64
+          bun run build-mac:x64
+        env:
+          CI: "true"
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 无证书:afterSign.js 做 ad-hoc 签名并跳过公证。
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          HUSKY: "0"
+          NODE_OPTIONS: "--max-old-space-size=8192"
+
+      - name: Upload to Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ inputs.version }}"
+          VERSION="${VERSION#v}"
+          shopt -s nullglob
+          gh release upload "v${VERSION}" \
+            out/StockBuddy-*-mac-*.dmg \
+            --clobber
+
+      - name: Install Qiniu Node.js SDK
+        if: ${{ env.QINIU_ACCESS_KEY != '' }}
+        working-directory: ${{ github.workspace }}
+        run: npm install --no-save --no-package-lock --ignore-scripts qiniu@7.15.2
+
+      - name: Upload assets to Qiniu Kodo
+        if: ${{ env.QINIU_ACCESS_KEY != '' }}
+        shell: bash
+        env:
+          QINIU_ACCESS_KEY: ${{ secrets.QINIU_ACCESS_KEY || vars.QINIU_ACCESS_KEY }}
+          QINIU_SECRET_KEY: ${{ secrets.QINIU_SECRET_KEY || vars.QINIU_SECRET_KEY }}
+          QINIU_BUCKET: ${{ secrets.QINIU_BUCKET || vars.QINIU_BUCKET }}
+          QINIU_REGION: ${{ secrets.QINIU_REGION || vars.QINIU_REGION }}
+          QINIU_DOMAIN: ${{ secrets.QINIU_DOMAIN || vars.QINIU_DOMAIN }}
+          QINIU_KEY_PREFIX: ${{ secrets.QINIU_KEY_PREFIX || vars.QINIU_KEY_PREFIX }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ inputs.version }}"
+          VERSION="${VERSION#v}"
+          export QINIU_KEY_PREFIX="${QINIU_KEY_PREFIX:-stockbuddy/releases/${VERSION}}"
+          unset QINIU_OBJECT_KEY
+          shopt -s nullglob
+          files=(out/StockBuddy-*-mac-*.dmg)
+          [ "${#files[@]}" -gt 0 ] || { echo "No macOS release assets found" >&2; exit 1; }
+          for file in "${files[@]}"; do
+            node ../.github/scripts/upload-to-qiniu.cjs "$file"
+          done
+
+  build-linux:
+    name: Build Linux (Ubuntu deb)
+    if: ${{ inputs.build_linux }}
+    needs: create-release
+    # 固定用 ubuntu-22.04 而非 ubuntu-latest(24.04):
+    # 22.04 的 glibc 更老,打出的 deb 在 22.04/24.04 上都能跑;
+    # 若在 24.04 上构建,产物要求 glibc >= 2.39,老系统装不上。
+    runs-on: ubuntu-22.04
+    env:
+      QINIU_ACCESS_KEY: ${{ secrets.QINIU_ACCESS_KEY || vars.QINIU_ACCESS_KEY }}
+    defaults:
+      run:
+        working-directory: AionUi
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Cache bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('AionUi/bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
+
+      - name: Cache Electron & electron-builder downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/electron/
+            ~/.cache/electron-builder/
+          key: electron-${{ runner.os }}-${{ hashFiles('AionUi/package.json') }}
+          restore-keys: |
+            electron-${{ runner.os }}-
+
+      # 缓存预下载的 bundled 资源(aioncore ~50MB + python ~40MB + hub)。
+      - name: Cache bundled resources (aioncore + python + hub)
+        uses: actions/cache@v4
+        with:
+          path: |
+            AionUi/resources/bundled-python
+            AionUi/resources/bundled-aioncore
+            AionUi/resources/hub
+          key: bundled-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('AionUi/package.json', 'AionUi/packages/shared-scripts/src/prepare-bundled-python.js', 'AionUi/packages/shared-scripts/src/prepare-aioncore.js', 'AionUi/scripts/resolveAioncoreVersion.js', 'AionUi/scripts/prepareHubResources.js') }}
+          restore-keys: |
+            bundled-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+        env:
+          HUSKY: "0"
+
+      - name: Pin build version
+        run: npm pkg set version=${{ inputs.version }}
+
+      - name: Build Linux .deb installer
+        run: bun run build-deb
+        env:
+          CI: "true"
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          HUSKY: "0"
+          # deb 内层本来就是 gzip 压缩,压缩级别只影响打包速度,不影响产物
+          ELECTRON_BUILDER_COMPRESSION_LEVEL: "1"
+          # renderer 有上万模块,vite/rollup 默认 2GB heap 会 OOM
+          NODE_OPTIONS: "--max-old-space-size=4096"
+
+      - name: Upload to Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ inputs.version }}"
+          VERSION="${VERSION#v}"
+          shopt -s nullglob
+          gh release upload "v${VERSION}" \
+            out/StockBuddy-*-linux-*.deb \
+            --clobber
+
+      - name: Install Qiniu Node.js SDK
+        if: ${{ env.QINIU_ACCESS_KEY != '' }}
+        working-directory: ${{ github.workspace }}
+        run: npm install --no-save --no-package-lock --ignore-scripts qiniu@7.15.2
+
+      - name: Upload assets to Qiniu Kodo
+        if: ${{ env.QINIU_ACCESS_KEY != '' }}
+        shell: bash
+        env:
+          QINIU_ACCESS_KEY: ${{ secrets.QINIU_ACCESS_KEY || vars.QINIU_ACCESS_KEY }}
+          QINIU_SECRET_KEY: ${{ secrets.QINIU_SECRET_KEY || vars.QINIU_SECRET_KEY }}
+          QINIU_BUCKET: ${{ secrets.QINIU_BUCKET || vars.QINIU_BUCKET }}
+          QINIU_REGION: ${{ secrets.QINIU_REGION || vars.QINIU_REGION }}
+          QINIU_DOMAIN: ${{ secrets.QINIU_DOMAIN || vars.QINIU_DOMAIN }}
+          QINIU_KEY_PREFIX: ${{ secrets.QINIU_KEY_PREFIX || vars.QINIU_KEY_PREFIX }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ inputs.version }}"
+          VERSION="${VERSION#v}"
+          export QINIU_KEY_PREFIX="${QINIU_KEY_PREFIX:-stockbuddy/releases/${VERSION}}"
+          unset QINIU_OBJECT_KEY
+          shopt -s nullglob
+          files=(out/StockBuddy-*-linux-*.deb)
+          [ "${#files[@]}" -gt 0 ] || { echo "No Linux release assets found" >&2; exit 1; }
+          for file in "${files[@]}"; do
+            node ../.github/scripts/upload-to-qiniu.cjs "$file"
+          done

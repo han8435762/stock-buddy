@@ -1,0 +1,33 @@
+{
+  "nav": {
+    "newResearch": "New Company Research",
+    "companies": "My Companies",
+    "updates": "Update Center",
+    "skills": "Research Skills",
+    "advancedFeatures": "Advanced Features",
+    "localFirst": "Local First",
+    "localFirstHint": "Data is stored on this computer",
+    "placeholder": "Under Construction",
+    "placeholderDescription": "This page will be implemented in a later phase.",
+    "modelSettings": "تنظیمات مدل"
+  },
+  "materialModal": {
+    "title": "انتخاب مواد برای این پژوهش",
+    "searchPlaceholder": "جستجو بر اساس نام فایل، سال یا نوع",
+    "selectedCount": "{{count}} انتخاب شد",
+    "clear": "پاک کردن",
+    "apply": "اعمال انتخاب",
+    "empty": "موردی یافت نشد"
+  },
+  "newResearch": {
+    "noCompanyTitle": "هنوز شرکتی وجود ندارد",
+    "noCompanyDesc": "ابتدا یک شرکت اضافه کنید تا کتابخانه تحقیق آن قبل از شروع ساخته شود.",
+    "goAddCompany": "افزودن شرکت",
+    "claudeUnavailableTitle": "Claude Code آماده نیست",
+    "claudeUnavailableDesc": "Claude Code در دسترس نیست یا هیچ ارائه‌دهنده مدلی پیکربندی نشده است، بنابراین تحقیق ممکن است ناموفق باشد.",
+    "goConfigureModel": "پیکربندی مدل",
+    "continueCreate": "همچنان ایجاد شود",
+    "promptResearchCompany": "این شرکت را بررسی کن",
+    "promptRecentAnnouncements": "اطلاعیه‌های سه ماه گذشته را خلاصه کن"
+  }
+}
