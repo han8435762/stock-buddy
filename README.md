@@ -62,11 +62,22 @@ StockBuddy 是一个面向 A 股个股研究的本地优先 AI 投研工作台�
 ## 项目结构
 
 ```text
-.
-├── AionUi/       # StockBuddy 桌面端应用
-├── website/      # 官网源码、构建与部署配置
-├── prototype/    # 产品原型与产品文档
-└── tasks/        # 开发计划与任务清单
+ AionUi/
+ ├── packages/
+ │   ├── desktop/         # StockBuddy Electron 桌面端与主要业务界面
+ │   ├── web-cli/         # 独立 WebUI 运行时 CLI
+ │   ├── web-host/        # WebUI 服务端宿主与静态资源服务
+ │   └── shared-scripts/  # 跨包复用的构建与开发脚本
+ ├── mobile/              # 移动端相关代码与资源
+ ├── examples/            # 扩展与第三方集成示例
+ ├── docs/                # 开发指南、产品文档与使用说明
+ ├── resources/           # 应用资源、演示素材与静态文件
+ ├── scripts/             # 构建、打包、发布和辅助脚本
+ ├── tests/               # E2E、集成测试、单元测试与测试夹具
+ ├── public/              # 公共静态资源
+ ├── patches/             # 依赖补丁
+ ├── package.json         # 项目脚本、依赖与 Electron 配置
+ └── readme.md            # AionUi 基础项目说明
 ```
 
 StockBuddy 基于 [AionUi](https://github.com/iofficeai/aionui) 进行二次开发，复用了其桌面端基础设施、AI Agent 会话能力和技能系统，并围绕 A 股公司研究重新组织产品体验。
@@ -81,12 +92,8 @@ StockBuddy 基于 [AionUi](https://github.com/iofficeai/aionui) 进行二次开�
 
 桌面端源码位于 `AionUi/`。具体的依赖安装、开发、测试和打包命令请参考：
 
-- [`AionUi/README.md`](AionUi/README.md)
+- [`AionUi/readme.md`](AionUi/readme.md)
 - [`AionUi/package.json`](AionUi/package.json)
-
-### 官网
-
-官网源码位于 `website/`，本地开发与部署说明见 [`website/README.md`](website/README.md)。
 
 ## 致谢
 
