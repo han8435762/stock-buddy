@@ -1,5 +1,7 @@
 # StockBuddy
 
+[使用教程](https://x92l0onftm.feishu.cn/wiki/H9tNwppURiVPDakRsgVc0cKCnpc?from=from_copylink) · [生成研报合集](https://x92l0onftm.feishu.cn/wiki/ERlHwinyxinTY7k66jocOZw8n5d?from=from_copylink)
+
 [![访问官网](https://img.shields.io/badge/访问官网-stock--buddy.top-1f6feb?style=for-the-badge)](https://www.stock-buddy.top/)
 
 StockBuddy 是一个面向 A 股个股研究的本地优先 AI 投研工作台。
