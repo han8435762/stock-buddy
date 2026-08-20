@@ -221,7 +221,7 @@ bun run dist:linux
 
 ## 致谢
 
-感谢 [iOfficeAI/AionUi](https://github.com/iofficeai/aionui) 开源项目提供的基础能力与工程实践。StockBuddy 在其基础上进行产品化和领域化改造，专注于 A 股个股研究场景。
+感谢 [iOfficeAI/AionUi](https://github.com/iofficeai/aionui) 和 [simonlin1212/a-stock-data](https://github.com/simonlin1212/a-stock-data) 开源项目提供的基础能力与数据支持。StockBuddy 在此基础上进行产品化和领域化改造，专注于 A 股个股研究场景。
 
 ## 免责声明
 
