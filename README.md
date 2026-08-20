@@ -223,6 +223,10 @@ bun run dist:linux
 
 感谢 [iOfficeAI/AionUi](https://github.com/iofficeai/aionui) 和 [simonlin1212/a-stock-data](https://github.com/simonlin1212/a-stock-data) 开源项目提供的基础能力与数据支持。StockBuddy 在此基础上进行产品化和领域化改造，专注于 A 股个股研究场景。
 
+## 联系方式
+
+微信：`417990683`
+
 ## 使用协议
 
 - 个人使用：无需额外授权。
