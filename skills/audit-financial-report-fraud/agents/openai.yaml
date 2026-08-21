@@ -1,0 +1,4 @@
+interface:
+  display_name: "财报欺诈排查"
+  short_description: "从年报、半年报、季报和附注中识别财务操纵与欺诈风险"
+  default_prompt: "Use $audit-financial-report-fraud to audit this company’s financial reports for manipulation and fraud risks."
