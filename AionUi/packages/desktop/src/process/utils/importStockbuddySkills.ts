@@ -6,7 +6,13 @@ import { app } from 'electron';
 import { httpRequest } from '@/common/adapter/httpBridge';
 
 /** Stock-research skills shipped alongside the stock-buddy repo. */
-const STOCKBUDDY_SKILLS = ['a-stock-data', 'yanbao', 'pdf-to-markdown', 'download-a-share-announcements'];
+const STOCKBUDDY_SKILLS = [
+  'a-stock-data',
+  'yanbao',
+  'pdf-to-markdown',
+  'download-a-share-announcements',
+  'audit-financial-report-fraud',
+];
 
 /** Manifest recording the source snapshot each stockbuddy skill was imported from. */
 const MANIFEST_FILE_NAME = 'stockbuddy-skill-manifest.json';
